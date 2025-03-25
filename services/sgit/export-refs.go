@@ -10,39 +10,42 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
-// refs is full names
-func SyncRefs(repo *database.Repository, refs ...string) func() (*database.Reference, error) {
+// refs are full names
+func ForEachRef(repo *database.Repository, refs ...string) func() (*database.Reference, bool) {
 	length := len(refs)
 	r, _ := git.PlainOpen(repo.Path)
 
 	if length == 0 {
-
 		iter, err := r.References()
-		return func() (*database.Reference, error) {
-			if err != nil {
-				iter.Close() // Necessary?
-				return nil, err
-			}
+		if err != nil {
+			logger.Panic().Err(err).Msg("failed to call repo.References")
+		}
+		return func() (*database.Reference, bool) {
 			gref, err := iter.Next()
-			if err != nil {
-				return nil, err
+			if err == io.EOF {
+				iter.Close()
+				logger.Info().Msg("Done")
+				return nil, false
 			}
-
+			if err != nil {
+				return nil, true
+			}
 			ref, err := get_one(r, gref)
 			if err != nil {
-				return nil, err
+				return nil, true
 			}
 			if ref != nil {
 				ref.RepositoryID = repo.ID
 			}
-			return ref, nil
+			return ref, true
 		}
 	}
 
 	index := 0
-	return func() (*database.Reference, error) {
+	return func() (*database.Reference, bool) {
 		if index >= length {
-			return nil, io.EOF
+				logger.Info().Msg("Done")
+			return nil, false
 		}
 		defer func() {
 			index++
@@ -50,19 +53,16 @@ func SyncRefs(repo *database.Repository, refs ...string) func() (*database.Refer
 		name := plumbing.ReferenceName(refs[index])
 		gref, err := r.Reference(name, true)
 		if err != nil {
-			return nil, err
+			return nil, true
 		}
 		ref, err := get_one(r, gref)
-		// if err == object.ErrUnsupportedObject {
-		// skip tag on tree or blob TODO log this warning, put it outside
-		// }
 		if err != nil {
-			return nil, err
+			return nil, true
 		}
 		if ref != nil {
 			ref.RepositoryID = repo.ID
 		}
-		return ref, nil
+		return ref, true
 	}
 }
 
@@ -93,8 +93,13 @@ func get_one(repo *git.Repository, gref *plumbing.Reference) (*database.Referenc
 	case *object.Tag:
 		rref.Type = database.TagAn
 		cobj, err := o.Commit()
+		if err == object.ErrUnsupportedObject {
+			logger.Info().
+				Str("Tag", gref.String()).
+				Msg("tag on non-commit object is not supported")
+			return nil, nil
+		}
 		if err != nil {
-			// tag on tree or blob
 			return nil, err
 		}
 		rref.CommitObj = cobj

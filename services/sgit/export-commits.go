@@ -15,7 +15,7 @@ import (
 	"bushi/utils/log"
 )
 
-var logger = log.Logger.With().Str("service", "internal").Logger()
+var logger = log.Logger.With().Str("service", "sgit").Logger()
 
 type state struct {
 	data_skip int
