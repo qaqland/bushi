@@ -82,20 +82,12 @@ type File struct {
 	Name string `gorm:"unique"`
 }
 
-type RefType int
-
-const (
-	Branch RefType = iota
-	TagLw          // lightweight
-	TagAn          // annotated
-)
-
 type Reference struct {
 	ID           uint                   `gorm:"primarykey"`
 	ShortName    string                 `gorm:"index"`
 	FullName     plumbing.ReferenceName `gorm:"index"`
 	Time         time.Time
-	Type         RefType
+	IsTag        bool
 	CommitID     uint
 	CommitObj    *object.Commit `gorm:"-"`
 	Commit       Commit
@@ -107,7 +99,7 @@ func (r *Reference) BeforeSave(tx *gorm.DB) error {
 	if r.ShortName == "" {
 		r.ShortName = r.FullName.Short()
 	}
-	// TODO fullfill CommitID
+	// TODO fullfill CommitID and time from CommitObj
 	return nil
 }
 

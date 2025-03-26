@@ -1,4 +1,4 @@
-package sgit
+package igit
 
 import (
 	"bufio"
@@ -15,7 +15,7 @@ import (
 	"bushi/utils/log"
 )
 
-var logger = log.Logger.With().Str("service", "sgit").Logger()
+var logger = log.Logger.With().Str("service", "igit").Logger()
 
 type state struct {
 	data_skip int

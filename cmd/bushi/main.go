@@ -8,8 +8,8 @@ import (
 
 	"bushi/config"
 	"bushi/database"
+	"bushi/internal/igit"
 	"bushi/server"
-	"bushi/services/sgit"
 	"bushi/utils/log"
 )
 
@@ -48,7 +48,7 @@ func main() {
 
 		// continue
 
-		iter := sgit.FastExport(&repo, cfg.Database.MarkDir)
+		iter := igit.FastExport(&repo, cfg.Database.MarkDir)
 		for {
 			commit, ok := iter()
 			if !ok {

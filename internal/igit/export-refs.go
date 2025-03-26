@@ -1,4 +1,4 @@
-package sgit
+package igit
 
 import (
 	"io"
@@ -44,7 +44,7 @@ func ForEachRef(repo *database.Repository, refs ...string) func() (*database.Ref
 	index := 0
 	return func() (*database.Reference, bool) {
 		if index >= length {
-				logger.Info().Msg("Done")
+			logger.Info().Msg("Done")
 			return nil, false
 		}
 		defer func() {
@@ -80,6 +80,7 @@ func get_one(repo *git.Repository, gref *plumbing.Reference) (*database.Referenc
 
 	rref := database.Reference{
 		FullName: name,
+		IsTag:    name.IsTag(),
 	}
 
 	obj, err := repo.Object(plumbing.AnyObject, hash)
@@ -88,10 +89,8 @@ func get_one(repo *git.Repository, gref *plumbing.Reference) (*database.Referenc
 	}
 	switch o := obj.(type) {
 	case *object.Commit:
-		rref.Type = database.TagLw
 		rref.CommitObj = o
 	case *object.Tag:
-		rref.Type = database.TagAn
 		cobj, err := o.Commit()
 		if err == object.ErrUnsupportedObject {
 			logger.Info().
@@ -104,12 +103,6 @@ func get_one(repo *git.Repository, gref *plumbing.Reference) (*database.Referenc
 		}
 		rref.CommitObj = cobj
 	}
-
-	if name.IsBranch() {
-		rref.Type = database.Branch
-	}
-
-	// TODO copy commit time to ref
 
 	return &rref, nil
 }

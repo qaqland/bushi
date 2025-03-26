@@ -25,7 +25,7 @@ func NewSqliteDB(c config.Config) Database {
 	gorm_config := gorm.Config{
 		CreateBatchSize: 64,
 		PrepareStmt:     true,
-		Logger: gorm_log.Discard,
+		Logger:          gorm_log.Discard,
 		// Logger:          gorm_log.Default.LogMode(gorm_log.Silent),
 	}
 
@@ -53,6 +53,15 @@ func (db *SqliteDB) StoreRepository(ctx context.Context, repo *Repository) error
 	defer cancel()
 
 	// RepositoryID should be 0, use Name to find
+	result := db.WithContext(ctx).Where(repo).FirstOrCreate(repo)
+	return result.Error
+}
+
+func (db *SqliteDB) StoreReference(ctx context.Context, ref *Reference) error {
+	ctx, cancel := context.WithTimeout(ctx, sqliteTimeout)
+	defer cancel()
+
+	// FIXME: unique(repo, refname, type)
 	result := db.WithContext(ctx).Where(repo).FirstOrCreate(repo)
 	return result.Error
 }
