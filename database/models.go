@@ -96,10 +96,8 @@ type Reference struct {
 }
 
 func (r *Reference) BeforeSave(tx *gorm.DB) error {
-	if r.ShortName == "" {
-		r.ShortName = r.FullName.Short()
-	}
-	// TODO fullfill CommitID and time from CommitObj
+	// only autofill database fields
+	// TODO get CommitID from CommitObj
 	return nil
 }
 

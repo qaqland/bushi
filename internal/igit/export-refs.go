@@ -79,8 +79,9 @@ func get_one(repo *git.Repository, gref *plumbing.Reference) (*database.Referenc
 	}
 
 	rref := database.Reference{
-		FullName: name,
-		IsTag:    name.IsTag(),
+		FullName:  name,
+		ShortName: name.Short(),
+		IsTag:     name.IsTag(),
 	}
 
 	obj, err := repo.Object(plumbing.AnyObject, hash)
@@ -103,6 +104,8 @@ func get_one(repo *git.Repository, gref *plumbing.Reference) (*database.Referenc
 		}
 		rref.CommitObj = cobj
 	}
+
+	// TODO copy time from commit to ref
 
 	return &rref, nil
 }
