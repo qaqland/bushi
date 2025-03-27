@@ -2,6 +2,7 @@ package igit
 
 import (
 	"io"
+	"strings"
 
 	"bushi/database"
 
@@ -80,7 +81,7 @@ func get_one(repo *git.Repository, gref *plumbing.Reference) (*database.Referenc
 
 	rref := database.Reference{
 		FullName:  name,
-		ShortName: name.Short(),
+		ShortName: strings.ReplaceAll(name.Short(), "/", ":"),
 		IsTag:     name.IsTag(),
 	}
 
@@ -106,6 +107,7 @@ func get_one(repo *git.Repository, gref *plumbing.Reference) (*database.Referenc
 	}
 
 	// TODO copy time from commit to ref
+	rref.Time = rref.CommitObj.Committer.When.Unix()
 
 	return &rref, nil
 }

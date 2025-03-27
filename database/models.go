@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
@@ -69,11 +68,6 @@ func (c *Commit) BeforeCreate(tx *gorm.DB) error {
 }
 
 func (c *Commit) String() string {
-	// filenames := make([]string, len(c.Files))
-	// for i, f := range c.Files {
-	// 	filenames[i] = f.Name
-	// }
-	// return fmt.Sprintf("Commit %d %s %d: %s", c.ID, c.Oid, c.Mark, filenames)
 	return fmt.Sprintf("Commit %d %s %d: %d", c.ID, c.Oid, c.Mark, len(c.Files))
 }
 
@@ -86,8 +80,8 @@ type Reference struct {
 	ID           uint                   `gorm:"primarykey"`
 	ShortName    string                 `gorm:"index"`
 	FullName     plumbing.ReferenceName `gorm:"index"`
-	Time         time.Time
-	IsTag        bool
+	Time         int64                  `gorm:"index"`
+	IsTag        bool                   // drop?
 	CommitID     uint
 	CommitObj    *object.Commit `gorm:"-"`
 	Commit       Commit
@@ -96,8 +90,19 @@ type Reference struct {
 }
 
 func (r *Reference) BeforeSave(tx *gorm.DB) error {
-	// only autofill database fields
-	// TODO get CommitID from CommitObj
+	if r.CommitObj == nil {
+		return errors.New("Reference must have a commit target")
+	}
+	var cobj Commit
+	err := tx.
+		Select("id").
+		Where("repository_id = ? AND oid = ?", r.RepositoryID, r.CommitObj.Hash).
+		First(&cobj).
+		Error
+	if err != nil {
+		return fmt.Errorf("Failed to find commit %d in repository %d", r.CommitObj.Hash, r.RepositoryID)
+	}
+	r.CommitID = cobj.ID
 	return nil
 }
 
