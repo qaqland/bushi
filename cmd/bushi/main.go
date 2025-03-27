@@ -54,9 +54,25 @@ func main() {
 			if !ok {
 				break
 			}
-			commit.RepositoryID = repo.ID
 			if err := db.StoreCommit(context.TODO(), commit); err != nil {
 				logger.Fatal().Err(err).Str("oid", commit.Oid).Msg("store commit")
+			}
+		}
+
+		ref_iter := igit.ForEachRef(&repo)
+		for {
+			ref, ok := ref_iter()
+			if !ok {
+				break
+			}
+			if ref == nil {
+				continue
+			}
+			if err := db.StoreReference(context.TODO(), ref); err != nil {
+				logger.Panic().
+					Err(err).
+					Str("oid", ref.FullName.String()).
+					Msg("store reference")
 			}
 		}
 	}

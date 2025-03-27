@@ -12,7 +12,7 @@ import (
 
 type Database interface {
 	StoreCommit(ctx context.Context, commit *Commit) error
-
+	StoreReference(ctx context.Context, ref *Reference) error
 	StoreRepository(ctx context.Context, repo *Repository) error
 }
 
@@ -79,13 +79,13 @@ type File struct {
 type Reference struct {
 	ID           uint                   `gorm:"primarykey"`
 	ShortName    string                 `gorm:"index"`
-	FullName     plumbing.ReferenceName `gorm:"index"`
+	FullName     plumbing.ReferenceName `gorm:"uniqueIndex:idx_repo_ref"`
 	Time         int64                  `gorm:"index"`
 	IsTag        bool                   // drop?
 	CommitID     uint
 	CommitObj    *object.Commit `gorm:"-"`
 	Commit       Commit
-	RepositoryID uint
+	RepositoryID uint `gorm:"uniqueIndex:idx_repo_ref"`
 	Repository   Repository
 }
 
@@ -93,14 +93,15 @@ func (r *Reference) BeforeSave(tx *gorm.DB) error {
 	if r.CommitObj == nil {
 		return errors.New("Reference must have a commit target")
 	}
+	oid := r.CommitObj.Hash.String()
 	var cobj Commit
 	err := tx.
 		Select("id").
-		Where("repository_id = ? AND oid = ?", r.RepositoryID, r.CommitObj.Hash).
+		Where("repository_id = ? AND oid = ?", r.RepositoryID, oid).
 		First(&cobj).
 		Error
 	if err != nil {
-		return fmt.Errorf("Failed to find commit %d in repository %d", r.CommitObj.Hash, r.RepositoryID)
+		return fmt.Errorf("Failed to find commit %v in repository %d", oid, r.RepositoryID)
 	}
 	r.CommitID = cobj.ID
 	return nil
@@ -112,5 +113,6 @@ func AutoMigrate(db *gorm.DB) error {
 		&Repository{},
 		&File{},
 		&Repository{},
+		&Reference{},
 	)
 }

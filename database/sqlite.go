@@ -7,6 +7,7 @@ import (
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	gorm_log "gorm.io/gorm/logger"
 
 	"bushi/config"
@@ -26,7 +27,7 @@ func NewSqliteDB(c config.Config) Database {
 		CreateBatchSize: 64,
 		PrepareStmt:     true,
 		Logger:          gorm_log.Discard,
-		// Logger:          gorm_log.Default.LogMode(gorm_log.Silent),
+		// Logger:          gorm_log.Default.LogMode(gorm_log.Info),
 	}
 
 	dsn := fmt.Sprintf("%s?journal=MEMORY&_sync=OFF", c.Database.Sqlite)
@@ -61,7 +62,10 @@ func (db *SqliteDB) StoreReference(ctx context.Context, ref *Reference) error {
 	ctx, cancel := context.WithTimeout(ctx, sqliteTimeout)
 	defer cancel()
 
-	// FIXME: unique(repo, refname, type)
-	result := db.WithContext(ctx).Where(repo).FirstOrCreate(repo)
+	result := db.WithContext(ctx).Clauses(
+		clause.OnConflict{
+			Columns:   []clause.Column{{Name: "full_name"}, {Name: "repository_id"}},
+			UpdateAll: true,
+		}).Create(ref)
 	return result.Error
 }
