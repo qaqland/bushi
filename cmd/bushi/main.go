@@ -1,14 +1,11 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"runtime/pprof"
 
 	"bushi/config"
-	"bushi/database"
-	"bushi/internal/igit"
 	"bushi/server"
 	"bushi/utils/log"
 )
@@ -29,51 +26,7 @@ func main() {
 		config_path = path
 	}
 	cfg := config.NewConfig(config_path)
-
-	db := database.NewSqliteDB(cfg)
-	server := server.Server{}
-
-	for _, e := range cfg.Repo {
-		repo := database.Repository{
-			Name: e.Name,
-			Head: e.Head,
-			Desc: e.Desc,
-			Path: e.Path,
-		}
-		if err := db.StoreRepository(context.TODO(), &repo); err != nil {
-			logger.Fatal().Err(err).Str("path", repo.Path).Msg("store repository")
-		}
-
-		server.Repositories.Store(repo.Name, &repo)
-
-		// continue
-
-		iter := igit.FastExport(&repo, cfg.Database.MarkDir)
-		for {
-			commit, ok := iter()
-			if !ok {
-				break
-			}
-			if err := db.StoreCommit(context.TODO(), commit); err != nil {
-				logger.Fatal().Err(err).Str("oid", commit.Oid).Msg("store commit")
-			}
-		}
-
-		ref_iter := igit.ForEachRef(&repo)
-		for {
-			ref, ok := ref_iter()
-			if !ok {
-				break
-			}
-			if ref == nil {
-				continue
-			}
-			if err := db.StoreReference(context.TODO(), ref); err != nil {
-				logger.Panic().
-					Err(err).
-					Str("oid", ref.FullName.String()).
-					Msg("store reference")
-			}
-		}
+	if err := server.Initialize(&cfg); err != nil {
 	}
+
 }

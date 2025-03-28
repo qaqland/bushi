@@ -10,7 +10,6 @@ import (
 	"gorm.io/gorm/clause"
 	gorm_log "gorm.io/gorm/logger"
 
-	"bushi/config"
 	"bushi/utils/log"
 )
 
@@ -22,7 +21,7 @@ type SqliteDB struct {
 	*gorm.DB
 }
 
-func NewSqliteDB(c config.Config) Database {
+func NewSqliteDB(path string) Database {
 	gorm_config := gorm.Config{
 		CreateBatchSize: 64,
 		PrepareStmt:     true,
@@ -30,7 +29,7 @@ func NewSqliteDB(c config.Config) Database {
 		// Logger:          gorm_log.Default.LogMode(gorm_log.Info),
 	}
 
-	dsn := fmt.Sprintf("%s?journal=MEMORY&_sync=OFF", c.Database.Sqlite)
+	dsn := fmt.Sprintf("%s?journal=MEMORY&_sync=OFF", path)
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm_config)
 	if err != nil {
 		logger.Fatal().Err(err).Msg("failed to open")
