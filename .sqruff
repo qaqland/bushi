@@ -1,0 +1,8 @@
+[sqruff]
+dialect = sqlite
+rules = all
+
+[sqruff:indentation]
+indent_unit = tab
+indented_joins = True
+

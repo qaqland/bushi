@@ -1,0 +1,23 @@
+path = "tests"
+
+[web]
+name = ""
+desc = ""
+
+[[repo]]
+name = "aports"
+desc = "Alpine packages build scripts (mirror)"
+path = "/home/qaq/aports/.git"
+head = "master"
+
+# [[repo]]
+# name = "gcc"
+# desc = "GNU Compiler Collection (GCC) (mirror)"
+# path = "/home/qaq/mirrors/gcc.git"
+# head = "master"
+
+# [[repo]]
+# name = "minipage"
+# desc = "mini page to learn axum"
+# path = "/home/qaq/minipage/.git"
+# head = "main"
