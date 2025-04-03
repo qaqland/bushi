@@ -1,14 +1,18 @@
+
 use tokio::sync::Mutex;
 
 pub mod commit;
-pub mod repository;
+pub mod oid;
 pub mod reference;
+pub mod repository;
 
 pub struct Connection(Mutex<rusqlite::Connection>);
 
-pub use commit::Commit as Commit;
-pub use commit::File as File;
-pub use repository::Repository as Repository;
+pub use commit::Commit;
+pub use commit::File;
+pub use oid::SqlOid;
+pub use reference::Reference;
+pub use repository::Repository;
 
 impl Connection {
     pub fn new<P>(path: P) -> Result<Self, rusqlite::Error>

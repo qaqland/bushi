@@ -5,7 +5,7 @@ use std::process::{Child, ChildStdout, Command, Stdio};
 use std::str::{self, FromStr};
 
 use crate::config::Repo;
-use crate::database::Commit;
+use crate::database::{Commit, Reference, SqlOid};
 
 enum ParseLine {
     IsCommit,
@@ -185,9 +185,10 @@ impl Iterator for CommitExportIter {
                 ParseLine::PartDone => {
                     // take and reset to default
                     let files = mem::take(&mut self.files);
+                    let hash = mem::take(&mut self.commit_hash);
                     let c = Commit {
                         commit_id: 0,
-                        commit_hash: mem::take(&mut self.commit_hash),
+                        commit_hash: SqlOid::from_str(&hash).expect("Failed to Parse Oid(hash)"),
                         commit_mark: mem::take(&mut self.commit_mark),
                         repo_id: self.repo_id,
                         parent_id: 0,
@@ -204,5 +205,72 @@ impl Iterator for CommitExportIter {
             }
             // continue loop
         }
+    }
+}
+
+pub struct RefsExportIter {
+    repo_id: i64,
+    grepo: git2::Repository,
+    refs: Vec<String>,
+}
+
+impl RefsExportIter {
+    pub fn new(repo: &Repo, mut refs: Vec<String>) -> anyhow::Result<Self> {
+        let grepo = git2::Repository::open_bare(&repo.path)?;
+        if refs.is_empty() {
+            refs = grepo
+                .references()?
+                .names()
+                .flatten()
+                .map(|r| r.to_string())
+                .collect();
+        }
+        let iter = Self {
+            repo_id: repo.repo_id,
+            grepo,
+            refs,
+        };
+        Ok(iter)
+    }
+}
+
+impl Iterator for RefsExportIter {
+    type Item = Reference;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(name) = self.refs.pop() {
+            let Ok(r) = self.grepo.find_reference(&name) else {
+                continue;
+            };
+            let is_tag = if r.is_tag() {
+                true
+            } else if r.is_branch() {
+                false
+            } else {
+                continue;
+            };
+            let Some(full_name) = r.name() else {
+                continue;
+            };
+            let Some(short_name) = r.shorthand() else {
+                continue;
+            };
+            if short_name == full_name {
+                continue;
+            }
+            if let Ok(commit) = r.peel_to_commit() {
+                let dr = Self::Item {
+                    repo_id: self.repo_id,
+                    full_name: full_name.to_string(),
+                    short_name: short_name.replace("/", ":"),
+                    is_tag,
+                    commit_id: 0,
+                    commit_hash: commit.id().into(),
+                    time: commit.committer().when().seconds(),
+                };
+                return Some(dr);
+            }
+        }
+        None
     }
 }

@@ -29,6 +29,9 @@ impl AppState {
         let conn = database::Connection::new(&config.path).expect("sqlite");
         let hash = config.into_hash();
 
+        git2::opts::enable_caching(false);
+        git2::opts::strict_hash_verification(false);
+
         Self {
             conn,
             mark,
@@ -57,6 +60,10 @@ impl AppState {
         for name in self.repo.blocking_read().keys() {
             self.sync_repo_commit(name).unwrap();
         }
+
+        for name in self.repo.blocking_read().keys() {
+            self.sync_repo_refs(name, Vec::new()).unwrap();
+        }
     }
 
     pub fn sync_repo_commit(&self, repo_name: &str) -> anyhow::Result<u32> {
@@ -77,7 +84,23 @@ impl AppState {
         Ok(count)
     }
 
-    pub fn sync_repo_refs(&self) {
-        todo!()
+    pub fn sync_repo_refs(&self, repo_name: &str, refs: Vec<String>) -> anyhow::Result<u32> {
+        let conn = self.conn.blocking_lock();
+        let mut count = 0;
+        if let Some(repo) = self.repo.blocking_read().get(repo_name) {
+            let mut iter =
+                sync::RefsExportIter::new(&repo, refs).expect("Failed to init RefsExportIter");
+
+            conn.execute("BEGIN TRANSACTION", ())?;
+            for mut r in iter.by_ref() {
+                r.upsert(&conn)?;
+                count += 1;
+                if count % 100 == 0 {
+                    println!("count: {}", count);
+                }
+            }
+            conn.execute("COMMIT", ())?;
+        }
+        Ok(count)
     }
 }

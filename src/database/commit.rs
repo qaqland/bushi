@@ -3,9 +3,11 @@ use std::fmt;
 use indoc::indoc;
 use rusqlite::{named_params, Connection, OptionalExtension};
 
+use super::SqlOid;
+
 pub struct Commit {
     pub commit_id: i64,
-    pub commit_hash: String,
+    pub commit_hash: SqlOid,
     pub commit_mark: i64,
     pub repo_id: i64,
     pub parent_id: i64,
@@ -18,7 +20,7 @@ impl fmt::Display for Commit {
         write!(
             f,
             "{} mark: {:5}^{:<5} id: {} files: {}",
-            self.commit_hash,
+            self.commit_hash.to_string(),
             self.commit_mark,
             self.parent_mark,
             self.commit_id,
@@ -43,6 +45,26 @@ impl Commit {
         "# })?;
         let commit_id = stmt.query_row(
             named_params! {":repo_id": repo_id, ":commit_mark": commit_mark},
+            |row| row.get::<_, i64>(0),
+        )?;
+        Ok(commit_id)
+    }
+
+    pub fn get_id_by_hash(
+        repo_id: i64,
+        commit_hash: &SqlOid,
+        conn: &Connection,
+    ) -> Result<i64, rusqlite::Error> {
+        if commit_hash.is_zero() {
+            return Ok(0);
+        }
+        let mut stmt = conn.prepare_cached(indoc! { r#"
+        SELECT commit_id FROM `commits`
+        WHERE repo_id = :repo_id AND commit_hash = :commit_hash
+        LIMIT 1;
+        "# })?;
+        let commit_id = stmt.query_row(
+            named_params! {":repo_id": repo_id, ":commit_hash": commit_hash},
             |row| row.get::<_, i64>(0),
         )?;
         Ok(commit_id)

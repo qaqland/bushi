@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.97"
 config = { version = "0.15.11", default-features = false, features = ["toml"] }
+git2 = { version = "0.20.1", default-features = false }
 indoc = "2.0.6"
 moka = { version = "0.12.10", features = ["future"] }
 rusqlite = "0.34.0"
