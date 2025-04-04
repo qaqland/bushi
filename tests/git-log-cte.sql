@@ -1,4 +1,4 @@
-.eqp on
+-- .eqp on
 WITH RECURSIVE commit_tree AS (
 	SELECT
 		c.commit_id,
@@ -6,7 +6,11 @@ WITH RECURSIVE commit_tree AS (
 		c.repo_id,
 		c.parent_id
 	FROM commits AS c
-	WHERE c.commit_hash = 'f5db752eeca1ac9193d2cd07d30401637419a4f1' AND c.repo_id = 1
+		INNER JOIN refs ON c.commit_id = refs.commit_id
+	WHERE
+		c.commit_id = refs.commit_id
+		AND c.repo_id = 1
+		AND refs.short_name = 'master'
 
 	UNION ALL
 
@@ -19,7 +23,7 @@ WITH RECURSIVE commit_tree AS (
 		INNER JOIN commit_tree AS ct ON c.commit_id = ct.parent_id
 )
 
-SELECT
+SELECT DISTINCT
 	ct.commit_id,
 	ct.commit_hash
 FROM commit_tree AS ct

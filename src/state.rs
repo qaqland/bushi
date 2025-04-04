@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use tokio::sync::RwLock;
@@ -40,14 +40,9 @@ impl AppState {
     }
 
     pub fn sync_all(&mut self) {
-        // repository: conn, Repo
-        self.sync_repo();
-        // commit: conn, mark, repo_name(repo_id, repo_path)
-        // reference: conn, repo_name(repo_id, repo_path)
-    }
-
-    fn sync_repo(&mut self) {
         let conn = self.conn.blocking_lock();
+
+        // repository: conn, Repo
         for (name, repo) in self.repo.get_mut() {
             let mut r = database::Repository::from(name);
             r.get_id_by_name(&conn)
@@ -57,50 +52,60 @@ impl AppState {
         }
         drop(conn);
 
-        for name in self.repo.blocking_read().keys() {
-            self.sync_repo_commit(name).unwrap();
-        }
+        self.sync_repo();
+    }
 
-        for name in self.repo.blocking_read().keys() {
-            self.sync_repo_refs(name, Vec::new()).unwrap();
+    fn sync_repo(&self) {
+        for (_name, repo) in self.repo.blocking_read().iter() {
+            self.sync_repo_commit(repo).unwrap();
+            self.sync_repo_refs(repo, Vec::new()).unwrap();
         }
     }
 
-    pub fn sync_repo_commit(&self, repo_name: &str) -> anyhow::Result<u32> {
-        let conn = self.conn.blocking_lock();
-        let mut count = 0;
-        if let Some(repo) = self.repo.blocking_read().get(repo_name) {
-            let mut iter = sync::CommitExportIter::new(&repo, &self.mark)
-                .expect("Failed to init CommitExportIter");
-            for mut c in iter.by_ref() {
-                c.insert(&conn)?;
-                count += 1;
-                if count % 1000 == 0 {
-                    println!("count: {}", count);
-                }
-            }
-            iter.close();
+    pub fn sync_repo_one(&self, repo_path: &Path, refs: Vec<String>) {
+        let repo = self.repo.blocking_read();
+        if let Some((_name, repo)) = repo.iter().find(|(_, v)| v.path == repo_path) {
+            self.sync_repo_commit(repo).unwrap();
+            self.sync_repo_refs(repo, refs).unwrap();
         }
+    }
+
+    // commit: conn, mark, repo(repo_id, repo_path)
+    pub fn sync_repo_commit(&self, repo: &config::Repo) -> anyhow::Result<u32> {
+        let mut count = 0;
+        let mut iter = sync::CommitExportIter::new(&repo, &self.mark)
+            .expect("Failed to init CommitExportIter");
+        for mut c in iter.by_ref() {
+            {
+                let conn = self.conn.blocking_lock();
+                c.insert(&conn)?;
+            }
+            count += 1;
+            if count % 1000 == 0 {
+                println!("count: {}", count);
+            }
+        }
+        iter.close();
         Ok(count)
     }
 
-    pub fn sync_repo_refs(&self, repo_name: &str, refs: Vec<String>) -> anyhow::Result<u32> {
-        let conn = self.conn.blocking_lock();
+    // refs: conn, refs, repo(repo_id, repo_path)
+    pub fn sync_repo_refs(&self, repo: &config::Repo, refs: Vec<String>) -> anyhow::Result<u32> {
         let mut count = 0;
-        if let Some(repo) = self.repo.blocking_read().get(repo_name) {
-            let mut iter =
-                sync::RefsExportIter::new(&repo, refs).expect("Failed to init RefsExportIter");
+        let mut iter =
+            sync::RefsExportIter::new(&repo, refs).expect("Failed to init RefsExportIter");
 
-            conn.execute("BEGIN TRANSACTION", ())?;
-            for mut r in iter.by_ref() {
-                r.upsert(&conn)?;
-                count += 1;
-                if count % 100 == 0 {
-                    println!("count: {}", count);
-                }
+        let conn = self.conn.blocking_lock();
+        conn.execute("BEGIN TRANSACTION", ())?;
+        for mut r in iter.by_ref() {
+            r.upsert(&conn)?;
+            count += 1;
+            if count % 100 == 0 {
+                println!("count: {}", count);
             }
-            conn.execute("COMMIT", ())?;
         }
+        conn.execute("COMMIT", ())?;
+
         Ok(count)
     }
 }
