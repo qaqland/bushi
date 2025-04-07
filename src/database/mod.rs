@@ -1,5 +1,4 @@
-
-use tokio::sync::Mutex;
+use std::sync::Mutex;
 
 pub mod commit;
 pub mod oid;
