@@ -1,12 +1,10 @@
-use std::sync::Mutex;
-
+pub mod channel;
 pub mod commit;
 pub mod oid;
 pub mod reference;
 pub mod repository;
 
-pub struct Connection(Mutex<rusqlite::Connection>);
-
+pub use channel::Connection;
 pub use commit::Commit;
 pub use commit::File;
 pub use oid::SqlOid;
@@ -14,7 +12,7 @@ pub use reference::Reference;
 pub use repository::Repository;
 
 impl Connection {
-    pub fn new<P>(path: P) -> Result<Self, rusqlite::Error>
+    pub fn init<P>(path: P) -> Result<Self, rusqlite::Error>
     where
         P: AsRef<std::path::Path>,
     {
@@ -26,21 +24,8 @@ impl Connection {
 
         conn.execute_batch(include_str!("init.sql"))?;
         conn.set_prepared_statement_cache_capacity(64);
-        Ok(Self(Mutex::new(conn)))
-    }
-}
 
-impl std::ops::Deref for Connection {
-    type Target = Mutex<rusqlite::Connection>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl std::ops::DerefMut for Connection {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+        Ok(Self::new(conn))
     }
 }
 
@@ -50,32 +35,16 @@ mod tests {
     use tempfile::tempdir;
 
     #[tokio::test]
-    async fn test_connection_select_async() {
+    async fn test_table() {
         let temp_dir = tempdir().expect("Failed to create temp dir");
         let db_path = temp_dir.path().to_path_buf();
-        let connection = Connection::new(&db_path).expect("Failed to create database connection");
 
-        let result = {
-            let conn = connection.lock().await;
-            conn.query_row("SELECT 1 + 1", [], |row| row.get::<_, i32>(0))
-                .expect("Failed to query database")
-        };
+        let conn = Connection::init(&db_path).expect("Failed to create database connection");
 
-        assert_eq!(result, 2);
-    }
+        let result = conn
+            .call(|conn| conn.query_row("SELECT 1 + 2", [], |row| row.get::<_, i32>(0)))
+            .await;
 
-    #[test]
-    fn test_connection_select_blocking() {
-        let temp_dir = tempdir().expect("Failed to create temp dir");
-        let db_path = temp_dir.path().to_path_buf();
-        let connection = Connection::new(&db_path).expect("Failed to create database connection");
-
-        let result = {
-            let conn = connection.blocking_lock();
-            conn.query_row("SELECT 1 + 2", [], |row| row.get::<_, i32>(0))
-                .expect("Failed to query database")
-        };
-
-        assert_eq!(result, 3);
+        assert_eq!(result, Ok(3));
     }
 }

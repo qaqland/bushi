@@ -26,7 +26,7 @@ impl AppState {
             unimplemented!()
         };
 
-        let conn = database::Connection::new(&config.path).expect("sqlite");
+        let conn = database::Connection::init(&config.path).expect("sqlite");
         let hash = config.into_hash();
 
         git2::opts::enable_caching(false);
@@ -39,23 +39,22 @@ impl AppState {
         }
     }
 
-    pub fn sync_all(&mut self) {
-        let conn = self.conn.blocking_lock();
-
+    pub fn sync_init_all(&mut self) {
         // repository: conn, Repo
         for (name, repo) in self.repo.get_mut() {
             let mut r = database::Repository::from(name);
-            r.get_id_by_name(&conn)
+            let repo_id = self
+                .conn
+                .blocking_call(move |conn| r.get_id_by_name(conn))
                 .with_context(|| format!("Failed to store Repository: {}", name))
                 .expect("Failed to sync Repository");
-            repo.repo_id = r.repo_id;
+            repo.repo_id = repo_id;
         }
-        drop(conn);
 
-        self.sync_repo();
+        self.sync_repo_all();
     }
 
-    fn sync_repo(&self) {
+    fn sync_repo_all(&self) {
         for (_name, repo) in self.repo.blocking_read().iter() {
             self.sync_repo_commit(repo).unwrap();
             self.sync_repo_refs(repo, Vec::new()).unwrap();
@@ -76,10 +75,7 @@ impl AppState {
         let mut iter = sync::CommitExportIter::new(&repo, &self.mark)
             .expect("Failed to init CommitExportIter");
         for mut c in iter.by_ref() {
-            {
-                let conn = self.conn.blocking_lock();
-                c.insert(&conn)?;
-            }
+            self.conn.blocking_call(move |conn| c.insert(conn))?;
             count += 1;
             if count % 1000 == 0 {
                 println!("count: {}", count);
@@ -95,16 +91,13 @@ impl AppState {
         let mut iter =
             sync::RefsExportIter::new(&repo, refs).expect("Failed to init RefsExportIter");
 
-        let conn = self.conn.blocking_lock();
-        conn.execute("BEGIN TRANSACTION", ())?;
         for mut r in iter.by_ref() {
-            r.upsert(&conn)?;
+            self.conn.blocking_call(move |conn| r.upsert(conn))?;
             count += 1;
             if count % 100 == 0 {
                 println!("count: {}", count);
             }
         }
-        conn.execute("COMMIT", ())?;
 
         Ok(count)
     }
