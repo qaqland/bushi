@@ -82,12 +82,6 @@ impl CommitExportIter {
         })
     }
 
-    pub fn close(mut self) {
-        self.command
-            .wait()
-            .expect("child process encountered an error");
-    }
-
     fn parse_line(line: &str) -> ParseLine {
         let Some((token, value)) = line.split_once(' ') else {
             if !line.is_empty() {
@@ -122,6 +116,14 @@ impl CommitExportIter {
             "M" => ParseLine::ChangeFile(parse_file(value)),
             _ => ParseLine::Continue,
         }
+    }
+}
+
+impl Drop for CommitExportIter {
+    fn drop(&mut self) {
+        self.command
+            .wait()
+            .expect("child process encountered an error");
     }
 }
 

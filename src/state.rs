@@ -81,7 +81,6 @@ impl AppState {
                 println!("count: {}", count);
             }
         }
-        iter.close();
         Ok(count)
     }
 
