@@ -9,6 +9,7 @@ pub struct Commit {
     pub commit_id: i64,
     pub commit_hash: SqlOid,
     pub commit_mark: i64,
+    pub depth: i64,
     pub repo_id: i64,
     pub parent_id: i64,
     pub parent_mark: i64,
@@ -19,35 +20,40 @@ impl fmt::Display for Commit {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{} mark: {:5}^{:<5} id: {} files: {}",
+            "{} mark: {:5}^{:<5} id: {}, depth: {}, files: {}",
             self.commit_hash.to_string(),
             self.commit_mark,
             self.parent_mark,
             self.commit_id,
+            self.depth,
             self.files.len()
         )
     }
 }
 
 impl Commit {
-    pub fn get_id_by_mark(
+    pub fn get_id_depth_by_mark(
         repo_id: i64,
         commit_mark: i64,
         conn: &Connection,
-    ) -> Result<i64, rusqlite::Error> {
+    ) -> Result<(i64, i64), rusqlite::Error> {
         if commit_mark == 0 {
-            return Ok(0);
+            return Ok((0, 0));
         }
         let mut stmt = conn.prepare_cached(indoc! { r#"
-        SELECT commit_id FROM `commits`
+        SELECT commit_id, depth FROM `commits`
         WHERE repo_id = :repo_id AND commit_mark = :commit_mark
         LIMIT 1;
         "# })?;
-        let commit_id = stmt.query_row(
+        let (commit_id, depth) = stmt.query_row(
             named_params! {":repo_id": repo_id, ":commit_mark": commit_mark},
-            |row| row.get::<_, i64>(0),
+            |row| {
+                let commit_id = row.get::<_, i64>(0)?;
+                let depth = row.get::<_, i64>(1).unwrap_or(0);
+                Ok((commit_id, depth))
+            },
         )?;
-        Ok(commit_id)
+        Ok((commit_id, depth))
     }
 
     pub fn get_id_by_hash(
@@ -78,18 +84,19 @@ impl Commit {
         conn.execute("BEGIN TRANSACTION", ())?;
 
         let mut stmt1 = conn.prepare_cached(indoc! { r#"
-        INSERT INTO commits(commit_hash, commit_mark, repo_id, parent_id)
-        VALUES (:commit_hash, :commit_mark, :repo_id, :parent_id);
+        INSERT INTO commits(commit_hash, commit_mark, depth, repo_id, parent_id)
+        VALUES (:commit_hash, :commit_mark, :depth, :repo_id, :parent_id);
         "#})?;
 
         // maybe zero
-        let parent_id = Self::get_id_by_mark(self.repo_id, self.parent_mark, conn)?;
+        let (parent_id, depth) = Self::get_id_depth_by_mark(self.repo_id, self.parent_mark, conn)?;
 
         if parent_id == 0 {
-            println!("parent NULL {}", self);
+            println!("ROOT {}", self);
             stmt1.execute(named_params! {
                 ":commit_hash": self.commit_hash,
                 ":commit_mark": self.commit_mark,
+                ":depth": 0, // root
                 ":repo_id": self.repo_id,
                 ":parent_id": rusqlite::types::Null,
             })?;
@@ -97,11 +104,12 @@ impl Commit {
             stmt1.execute(named_params! {
                 ":commit_hash": self.commit_hash,
                 ":commit_mark": self.commit_mark,
+                ":depth": depth + 1,
                 ":repo_id": self.repo_id,
                 ":parent_id": parent_id,
             })?;
         }
-        let commit_id = Self::get_id_by_mark(self.repo_id, self.commit_mark, conn)?;
+        let (commit_id, _) = Self::get_id_depth_by_mark(self.repo_id, self.commit_mark, conn)?;
 
         let mut stmt2 = conn.prepare_cached(indoc! {r#"
         INSERT OR IGNORE INTO commit_files(commit_id, file_id)
@@ -115,6 +123,15 @@ impl Commit {
                 ":file_id": file_id,
             })?;
         }
+
+        // println!("files done");
+
+        // println!("ancestor start");
+        let mut stmt3 = conn.prepare_cached(include_str!("insert-ancestor.sql"))?;
+        stmt3.execute(named_params! {
+            ":commit_id": commit_id,
+        })?;
+        // println!("ancestor done");
 
         conn.execute("COMMIT", ())?;
         Ok(())

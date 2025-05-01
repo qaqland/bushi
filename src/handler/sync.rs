@@ -192,6 +192,7 @@ impl Iterator for CommitExportIter {
                         commit_id: 0,
                         commit_hash: SqlOid::from_str(&hash).expect("Failed to Parse Oid(hash)"),
                         commit_mark: mem::take(&mut self.commit_mark),
+                        depth: 0,
                         repo_id: self.repo_id,
                         parent_id: 0,
                         parent_mark: mem::take(&mut self.parent_mark),

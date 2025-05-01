@@ -8,11 +8,19 @@ CREATE TABLE IF NOT EXISTS commits (
 	commit_hash text NOT NULL,
 	commit_mark integer NOT NULL,
 	parent_id integer,
+	depth integer,
 	repo_id integer NOT NULL,
 	-- UNIQUE (repo_id, parent_id, commit_id),	-- it's faster without this line
 	UNIQUE (repo_id, commit_mark),
 	UNIQUE (repo_id, commit_hash)
 ) STRICT;
+
+CREATE TABLE IF NOT EXISTS ancestors (
+	commit_id integer NOT NULL,
+	level integer NOT NULL,
+	ancestor_id integer,
+	PRIMARY KEY (commit_id, level)
+) WITHOUT ROWID, STRICT;
 
 CREATE TABLE IF NOT EXISTS files (
 	file_id integer PRIMARY KEY AUTOINCREMENT,
