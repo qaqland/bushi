@@ -124,15 +124,6 @@ impl Commit {
             })?;
         }
 
-        // println!("files done");
-
-        // println!("ancestor start");
-        let mut stmt3 = conn.prepare_cached(include_str!("insert-ancestor.sql"))?;
-        stmt3.execute(named_params! {
-            ":commit_id": commit_id,
-        })?;
-        // println!("ancestor done");
-
         conn.execute("COMMIT", ())?;
         Ok(())
     }

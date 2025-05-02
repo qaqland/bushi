@@ -1,6 +1,10 @@
 [sqruff]
 dialect = sqlite
 rules = all
+templater = placeholder
+
+[sqruff:templater:placeholder]
+param_style = colon
 
 [sqruff:indentation]
 indent_unit = tab
