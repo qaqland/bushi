@@ -69,23 +69,15 @@ mod tests {
         assert_eq!(r_2, 2);
     }
 
-    fn select_add_num(conn: &rusqlite::Connection, num: i64) -> rusqlite::Result<i64> {
-        let r = conn.query_row("SELECT 1 + 1", [], |row| row.get::<_, i64>(0))?;
-        Ok(num + r)
-    }
-
     #[tokio::test]
-    async fn test_func() {
+    #[should_panic]
+    async fn test_error() {
         let s_conn = rusqlite::Connection::open_in_memory().unwrap();
         let a_conn = Connection::new(s_conn);
-        let r_3 = a_conn
-            .call(|conn| {
-                let r = select_add_num(conn, 1)?;
-                Ok(r)
-            })
+        a_conn
+            .call(|conn| conn.query_row("SELECT", [], |row| row.get::<_, i64>(0)))
             .await
             .unwrap();
-        assert_eq!(r_3, 3);
     }
 
     #[test]
@@ -93,10 +85,7 @@ mod tests {
         let s_conn = rusqlite::Connection::open_in_memory().unwrap();
         let a_conn = Connection::new(s_conn);
         let r_3 = a_conn
-            .blocking_call(|conn| {
-                let r = select_add_num(conn, 1)?;
-                Ok(r)
-            })
+            .blocking_call(|conn| conn.query_row("SELECT 2 + 1", [], |row| row.get::<_, i64>(0)))
             .unwrap();
         assert_eq!(r_3, 3);
     }
