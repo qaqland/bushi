@@ -6,7 +6,6 @@ pub mod repository;
 
 pub use channel::Connection;
 pub use commit::Commit;
-pub use commit::File;
 pub use oid::SqlOid;
 pub use reference::Reference;
 pub use repository::Repository;

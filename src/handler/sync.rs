@@ -19,19 +19,23 @@ enum ParseLine {
 }
 
 pub struct CommitExportIter {
+    // command
     command: Child,
     reader: BufReader<ChildStdout>,
     buffer: Vec<u8>,
+
     // debug
     line_number: usize,
+
     // fix field
     repo_id: i64,
+
     // internal state for parse
     is_commit: bool,
     skip_size: usize,
-    parent_mark: i64,
-    commit_mark: i64,
-    commit_hash: String,
+    parent_mark: Option<i64>,
+    commit_mark: Option<i64>,
+    commit_hash: Option<String>,
     files: Vec<String>,
 }
 
@@ -74,10 +78,10 @@ impl CommitExportIter {
             line_number: 0,
             repo_id: repo.repo_id,
             is_commit: false,
-            commit_mark: 0,
-            parent_mark: 0,
+            commit_mark: None,
+            parent_mark: None,
             skip_size: 0,
-            commit_hash: "".into(),
+            commit_hash: None,
             files: Vec::new(),
         })
     }
@@ -97,8 +101,10 @@ impl CommitExportIter {
             T: FromStr + std::default::Default,
             <T as FromStr>::Err: std::fmt::Debug,
         {
-            let mark = value.trim_start_matches(':').parse::<T>().unwrap();
-            mark
+            value
+                .trim_start_matches(':')
+                .parse::<T>()
+                .unwrap_or_default()
         }
 
         fn parse_file(line: &str) -> String {
@@ -178,25 +184,29 @@ impl Iterator for CommitExportIter {
             match result {
                 ParseLine::IsCommit => self.is_commit = true,
                 ParseLine::SkipMessage(n) => self.skip_size = n,
-                ParseLine::ParentMark(u) => self.parent_mark = u,
-                ParseLine::CommitMark(m) => self.commit_mark = m,
-                ParseLine::CommitHash(h) => self.commit_hash = h,
+                ParseLine::ParentMark(u) => self.parent_mark = Some(u),
+                ParseLine::CommitMark(m) => self.commit_mark = Some(m),
+                ParseLine::CommitHash(h) => self.commit_hash = Some(h),
                 ParseLine::ChangeFile(f) => self.files.push(f),
                 ParseLine::Continue => (),
                 // ParseLine::Error(_) => todo!(),
                 ParseLine::PartDone => {
                     // take and reset to default
                     let files = mem::take(&mut self.files);
-                    let hash = mem::take(&mut self.commit_hash);
+                    let Some(hash) = mem::take(&mut self.commit_hash) else {
+                        panic!()
+                    };
+                    let Some(commit_mark) = mem::take(&mut self.commit_mark) else {
+                        panic!()
+                    };
                     let c = Commit {
-                        commit_id: 0,
+                        commit_id: None,
                         commit_hash: SqlOid::from_str(&hash).expect("Failed to Parse Oid(hash)"),
-                        commit_mark: mem::take(&mut self.commit_mark),
-                        depth: 0,
+                        commit_mark,
                         repo_id: self.repo_id,
-                        parent_id: 0,
                         parent_mark: mem::take(&mut self.parent_mark),
-                        files: files.into_iter().map(|f| f.into()).collect(),
+                        depth:None,
+                        files,
                     };
                     if self.is_commit {
                         self.is_commit = false;

@@ -19,7 +19,7 @@ impl Reference {
             todo!()
         }
         if self.commit_id == 0 {
-            self.commit_id = Commit::get_id_by_hash(self.repo_id, &self.commit_hash, conn)?;
+            self.commit_id = Commit::fetch_id_by_hash(self.repo_id, &self.commit_hash, conn)?;
         }
         let mut stmt = conn.prepare_cached(indoc! { r#"
             INSERT INTO refs (
