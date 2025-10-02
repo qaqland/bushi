@@ -18,3 +18,14 @@ $ du -sh apk-tools.bundle
 git clone --bare apk-tools.bundle <new directory>
 ```
 
+```bash
+git fast-export \
+    --signed-tags strip \
+    --mark-tags \
+    --fake-missing-tagger \
+    --no-data \
+    --show-original-ids \
+    --reencode yes \
+    --branches --tags
+```
+
