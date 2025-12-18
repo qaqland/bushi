@@ -1,0 +1,6 @@
+*.db
+.cache
+build
+builddir
+core
+log
