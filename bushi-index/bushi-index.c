@@ -175,21 +175,23 @@ static bool db_prepare(const char *path) {
       FOR EACH ROW
       WHEN NEW.parent_hash IS NOT NULL
       BEGIN
-          INSERT INTO ancestors(commit_id, exponent, ancestor_id)
+          INSERT INTO ancestors(
+              commit_id, exponent, ancestor_id
+          )
           WITH RECURSIVE skip_list_cte(commit_id, exponent, ancestor_id) AS(
           SELECT
               NEW.commit_id,
-	            0 AS exponent,
-	            c.commit_id AS ancestor_id
-                 FROM
-	            commits AS c
-                 WHERE
-	            repository_id = NEW.repository_id
+              0 AS exponent,
+              c.commit_id AS ancestor_id
+          FROM
+              commits AS c
+          WHERE
+              repository_id = NEW.repository_id
               AND commit_hash = NEW.parent_hash
 
           UNION ALL
 
-          SELECT 
+          SELECT
               s.commit_id,
               s.exponent + 1,
               a.ancestor_id
@@ -229,8 +231,8 @@ static bool db_prepare(const char *path) {
           PRIMARY KEY(repository_id, name)
       ) WITHOUT ROWID, STRICT;
 
-      CREATE INDEX IF NOT EXISTS idx_branches_time ON
-          branches(time);
+      CREATE INDEX IF NOT EXISTS idx_branches_time
+          ON branches(time);
 
       CREATE TABLE IF NOT EXISTS tags(
           name TEXT NOT NULL,
@@ -251,8 +253,12 @@ static bool db_prepare(const char *path) {
 
   sql = SQL(
       -- ? \n
-      INSERT INTO repositories(name, path, head)
-      VALUES(?1, ?2, ?3) ON CONFLICT(name)
+      INSERT INTO repositories(
+          name, path, head
+      )
+      VALUES
+          (?1, ?2, ?3)
+      ON CONFLICT(name)
       DO UPDATE SET
           path = excluded.path,
           head = excluded.head;
@@ -266,13 +272,7 @@ static bool db_prepare(const char *path) {
 
   sql = SQL(
       -- ? \n
-      SELECT
-          repository_id
-      FROM
-          repositories
-      WHERE
-          name = ?1
-      LIMIT 1;
+      SELECT repository_id FROM repositories WHERE name = ?1 LIMIT 1;
   );
   rc = sqlite3_prepare_v2(conn, sql, strlen(sql) + 1,
                           &stmts[STMT_GET_REPOSITORY_ID], NULL);
@@ -317,9 +317,7 @@ static bool db_prepare(const char *path) {
 
   sql = SQL(
       -- ?\n
-      SELECT file_id FROM files
-      WHERE name = ?1 LIMIT 1
-      ;
+      SELECT file_id FROM files WHERE name = ?1 LIMIT 1;
   );
   rc = sqlite3_prepare_v2(conn, sql, strlen(sql) + 1, &stmts[STMT_GET_FILE_ID],
                           NULL);
@@ -329,8 +327,7 @@ static bool db_prepare(const char *path) {
 
   sql = SQL(
       -- ?\n
-      INSERT INTO files(name) VALUES (?1)
-      ;
+      INSERT INTO files(name) VALUES (?1);
   );
   rc = sqlite3_prepare_v2(conn, sql, strlen(sql) + 1, &stmts[STMT_INSERT_FILE],
                           NULL);
@@ -340,8 +337,7 @@ static bool db_prepare(const char *path) {
 
   sql = SQL(
       -- ?\n
-      INSERT INTO changes(commit_id, file_id) VALUES (?1, ?2)
-      ;
+      INSERT INTO changes(commit_id, file_id) VALUES (?1, ?2);
   );
   rc = sqlite3_prepare_v2(conn, sql, strlen(sql) + 1,
                           &stmts[STMT_INSERT_CHANGE], NULL);
@@ -361,8 +357,7 @@ static bool db_prepare(const char *path) {
           commits.commit_id = ?1
           AND parent.generation IS NOT NULL
           AND parent.commit_hash = commits.parent_hash
-          AND parent.repository_id = commits.repository_id
-      ;
+          AND parent.repository_id = commits.repository_id;
   );
   rc = sqlite3_prepare_v2(conn, sql, strlen(sql) + 1,
                           &stmts[STMT_UPDATE_GENERATION], NULL);
