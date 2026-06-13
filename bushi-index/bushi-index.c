@@ -27,10 +27,6 @@
 
 #define SQL(...) #__VA_ARGS__
 
-#ifndef RUN_TEST
-#define sync_main main
-#endif
-
 enum {
   STMT_UPSERT_REPOSITORY,
   STMT_GET_REPOSITORY_ID,
@@ -1092,7 +1088,7 @@ static void print_usage(void) {
        "       bushi-index -t DATABASE -d NAME\n");
 }
 
-int sync_main(int argc, char **argv) {
+int main(int argc, char **argv) {
   char *repo_path = NULL;
   char *repo_name = NULL;
   bool is_delete = false;
