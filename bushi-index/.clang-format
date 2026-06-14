@@ -1,2 +1,11 @@
-# A friend of mine strongly recommends using 2-space indentation,
-# so leave it empty here.
+# https://clang.llvm.org/docs/ClangFormatStyleOptions.html#examples
+# A style similar to the Linux Kernel style:
+
+BasedOnStyle: LLVM
+IndentWidth: 8
+UseTab: Always
+BreakBeforeBraces: Linux
+AllowShortIfStatementsOnASingleLine: false
+IndentCaseLabels: false
+BreakAfterReturnType: All
+
