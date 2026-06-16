@@ -8,4 +8,5 @@ BreakBeforeBraces: Linux
 AllowShortIfStatementsOnASingleLine: false
 IndentCaseLabels: false
 BreakAfterReturnType: All
-
+WhitespaceSensitiveMacros:
+  - SQL

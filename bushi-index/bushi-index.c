@@ -59,6 +59,121 @@ enum {
 };
 
 static sqlite3_stmt *stmts[STMT_COUNT];
+// clang-format off
+static const char *stmt_sql[STMT_COUNT] = {
+	[STMT_UPSERT_REPOSITORY] = SQL(
+		INSERT INTO repositories
+		(      repository_name
+		     , repository_path
+		     , repository_head
+		)
+		VALUES
+		    (?1, ?2, ?3)
+		ON CONFLICT(repository_name)
+		    DO UPDATE SET
+		      repository_path = excluded.repository_path
+		    , repository_head = excluded.repository_head;
+	),
+	[STMT_GET_REPOSITORY_ID] = SQL(
+		SELECT repository_id
+		  FROM repositories
+		 WHERE repository_name = ?1
+		 LIMIT 1;
+	),
+	[STMT_DELETE_REPOSITORY] = SQL(
+		DELETE FROM repositories
+		 WHERE repository_name = ?1;
+	),
+	[STMT_GET_COMMIT_ID] = SQL(
+		SELECT commit_id
+		  FROM commits
+		 WHERE repository_id = ?1
+		   AND commit_hash = ?2
+		 LIMIT 1;
+	),
+	[STMT_INSERT_COMMIT] = SQL(
+		INSERT INTO commits
+		(      commit_hash
+		     , parent_hash
+		     , generation
+		     , repository_id
+		)
+		VALUES
+		    (?1, ?2, ?3, ?4);
+	),
+	[STMT_GET_FILE_ID] = SQL(
+		SELECT file_id
+		  FROM files
+		 WHERE name = ?1
+		 LIMIT 1;
+	),
+	[STMT_INSERT_FILE] = SQL(
+		INSERT INTO files(name)
+		VALUES
+		    (?1);
+	),
+	[STMT_INSERT_CHANGE] = SQL(
+		INSERT INTO changes
+		(      commit_id
+		     , file_id
+		)
+		VALUES
+		    (?1, ?2);
+	),
+	[STMT_UPDATE_GENERATION] = SQL(
+		UPDATE commits
+		   SET generation = parent.generation + 1
+		  FROM commits AS parent
+		 WHERE commits.commit_id = ?1
+		   AND parent.generation IS NOT NULL
+		   AND parent.commit_hash = commits.parent_hash
+		   AND parent.repository_id = commits.repository_id;
+	),
+	[STMT_GET_REF_COMMIT_ID] = SQL(
+		SELECT commit_id
+		  FROM refs
+		 WHERE repository_id = ?1
+		   AND full_name = ?2
+		 LIMIT 1;
+	),
+	[STMT_UPSERT_REF] = SQL(
+		INSERT INTO refs
+		(      full_name
+		     , show_name
+		     , commit_id
+		     , ref_time
+		     , ref_type
+		     , is_dirty // always NULL here
+		     , repository_id
+		)
+		VALUES
+		    (?1, ?2, ?3, ?4, ?5, NULL, ?6)
+		ON CONFLICT(repository_id, full_name)
+		    DO UPDATE SET
+		      show_name = excluded.show_name
+		    , commit_id = excluded.commit_id
+		    , ref_time = excluded.ref_time
+		    , ref_type = excluded.ref_type
+		    , is_dirty = NULL;
+	),
+	[STMT_UPDATE_REF_CLEAN] = SQL(
+		UPDATE refs
+		   SET is_dirty = NULL
+		 WHERE repository_id = ?1
+		   AND full_name = ?2;
+	),
+	[STMT_UPDATE_REFS_DIRTY] = SQL(
+		UPDATE refs
+		   SET is_dirty = 1
+		 WHERE repository_id = ?1;
+	),
+	[STMT_DELETE_DIRTY_REFS] = SQL(
+		DELETE FROM refs
+		 WHERE repository_id = ?1
+		   AND is_dirty IS NOT NULL;
+	),
+};
+// clang-format on
 static sqlite3 *connection;
 static int64_t repository_id;
 static git_repository *repository_git;
@@ -157,7 +272,6 @@ db_prepare(const char *path)
 {
 	sqlite3 *conn = NULL;
 	char *errmsg = NULL;
-	const char *sql;
 	int rc;
 
 	assert(path);
@@ -168,335 +282,25 @@ db_prepare(const char *path)
 		goto err_open;
 	}
 
-  sql = SQL(
-      -- ?\n
-      PRAGMA synchronous = OFF;
+	const char init_sql[] = {
+#embed "init.sql"
+	    , '\0'};
 
-      CREATE TABLE IF NOT EXISTS repositories(
-          repository_id INTEGER PRIMARY KEY AUTOINCREMENT,
-          name TEXT UNIQUE NOT NULL,        // use in URL
-          path TEXT UNIQUE NOT NULL,        // GIT_DIR
-          head TEXT
-      ) STRICT;
+	rc = sqlite3_exec(conn, init_sql, NULL, NULL, &errmsg);
+	if (rc != SQLITE_OK) {
+		goto err_init;
+	}
 
-      CREATE TABLE IF NOT EXISTS commits(
-          commit_id INTEGER PRIMARY KEY AUTOINCREMENT,
-          commit_hash TEXT NOT NULL,
-          parent_hash TEXT,                 // only first parent
-          generation INTEGER,               // NOT NULL after stage2
-          repository_id INTEGER NOT NULL
-      ) STRICT;
+	for (int i = 0; i < STMT_COUNT; i++) {
+		rc = sqlite3_prepare_v2(conn, stmt_sql[i], -1, &stmts[i], NULL);
+		if (rc != SQLITE_OK) {
+			info("? stmt %d: %s", i, sqlite3_errmsg(conn));
+			goto err_stmt;
+		}
+	}
 
-      CREATE INDEX IF NOT EXISTS idx_commit_hash
-          ON commits(repository_id, commit_hash);
-      CREATE INDEX IF NOT EXISTS idx_parent_hash
-          ON commits(repository_id, parent_hash)
-          WHERE generation IS NOT NULL;
-
-      CREATE TABLE IF NOT EXISTS ancestors(
-          commit_id INTEGER NOT NULL,
-          exponent INTEGER NOT NULL,        // 2^n generation
-          ancestor_id INTEGER NOT NULL,     // aka. commit_id
-          PRIMARY KEY(commit_id, exponent)
-      ) WITHOUT ROWID, STRICT;
-// /*
-      CREATE TRIGGER IF NOT EXISTS tgr_ancestor
-      AFTER UPDATE OF generation ON commits
-      FOR EACH ROW
-      WHEN NEW.parent_hash IS NOT NULL
-      BEGIN
-          INSERT INTO ancestors(
-              commit_id, exponent, ancestor_id
-          )
-          WITH RECURSIVE skip_list_cte(commit_id, exponent, ancestor_id) AS(
-          SELECT
-              NEW.commit_id,
-              0 AS exponent,
-              c.commit_id AS ancestor_id
-          FROM
-              commits AS c
-          WHERE
-              repository_id = NEW.repository_id
-              AND commit_hash = NEW.parent_hash
-
-          UNION ALL
-
-          SELECT
-              s.commit_id,
-              s.exponent + 1,
-              a.ancestor_id
-          FROM
-              skip_list_cte AS s
-          INNER JOIN
-              ancestors AS a
-          ON
-              a.commit_id = s.ancestor_id
-              AND a.exponent = s.exponent
-          )
-
-          SELECT
-              commit_id, exponent, ancestor_id
-          FROM
-              skip_list_cte
-          WHERE
-              ancestor_id IS NOT NULL;
-      END;
-// */
-      CREATE TABLE IF NOT EXISTS files(
-          file_id INTEGER PRIMARY KEY AUTOINCREMENT,
-          name TEXT UNIQUE NOT NULL         // just like the hashmap
-      ) STRICT;
-
-      CREATE TABLE IF NOT EXISTS changes(
-          commit_id INTEGER NOT NULL,
-          file_id INTEGER NOT NULL,
-          PRIMARY KEY(commit_id, file_id)
-      ) WITHOUT ROWID, STRICT;
-
-      // 查询 git log -- path 时我们可以直接使用 JOIN 和 files.name like 'path%'，
-      // 也可以先把相关的 file_id 查出来再用 IN 进行查询，后者可能会更快一些？但是命中
-      // file_id 的数量可能会比较多，IN 语句存在不确定性。做 git blame 使用方法二更合适。
-
-      CREATE TABLE IF NOT EXISTS refs(
-          full_name TEXT NOT NULL,          // e.g. refs/heads/fix/issue-1
-          show_name TEXT NOT NULL,          // e.g. fix:issue-1
-          commit_id INTEGER NOT NULL,       // always commit_id
-          ref_time INTEGER NOT NULL,        // commit timestamp
-          ref_type INTEGER NOT NULL,        // 0 is branch, 1 is tag
-          is_dirty INTEGER DEFAULT NULL,
-          repository_id INTEGER NOT NULL,
-          PRIMARY KEY(repository_id, full_name),
-          UNIQUE(repository_id, ref_type, show_name)
-      ) WITHOUT ROWID, STRICT;
-
-      CREATE INDEX IF NOT EXISTS idx_refs_time
-          ON refs(repository_id, ref_time);
-      CREATE INDEX IF NOT EXISTS idx_refs_dirty
-          ON refs(repository_id, is_dirty)
-          WHERE is_dirty IS NOT NULL;
-  );
-
-  rc = sqlite3_exec(conn, sql, NULL, NULL, &errmsg);
-  if (rc != SQLITE_OK) {
-	  goto err_init;
-  }
-
-  sql = SQL(
-      -- ? \n
-      INSERT INTO repositories(
-          name, path, head
-      )
-      VALUES
-          (?1, ?2, ?3)
-      ON CONFLICT(name)
-      DO UPDATE SET
-          path = excluded.path,
-          head = excluded.head;
-  );
-
-  rc = sqlite3_prepare_v2(conn, sql, strlen(sql) + 1,
-			  &stmts[STMT_UPSERT_REPOSITORY], NULL);
-  if (rc != SQLITE_OK) {
-	  goto err_stmt;
-  }
-
-  sql = SQL(
-      -- ? \n
-      SELECT repository_id FROM repositories WHERE name = ?1 LIMIT 1;
-  );
-  rc = sqlite3_prepare_v2(conn, sql, strlen(sql) + 1,
-			  &stmts[STMT_GET_REPOSITORY_ID], NULL);
-  if (rc != SQLITE_OK) {
-	  goto err_stmt;
-  }
-
-  sql = SQL(
-      -- ? \n
-      DELETE FROM repositories WHERE name = ?1;
-  );
-  rc = sqlite3_prepare_v2(conn, sql, strlen(sql) + 1,
-			  &stmts[STMT_DELETE_REPOSITORY], NULL);
-  if (rc != SQLITE_OK) {
-	  goto err_stmt;
-  }
-
-  sql = SQL(
-      -- ?\n
-      SELECT
-          commit_id
-      FROM
-          commits
-      WHERE
-          repository_id = ?1
-          AND commit_hash = ?2
-      LIMIT
-          1;
-  );
-  rc = sqlite3_prepare_v2(conn, sql, strlen(sql) + 1,
-			  &stmts[STMT_GET_COMMIT_ID], NULL);
-  if (rc != SQLITE_OK) {
-	  goto err_stmt;
-  }
-
-  sql = SQL(
-      -- ?\n
-      INSERT INTO commits(
-          commit_hash,
-          parent_hash,
-          generation,
-          repository_id
-      )
-      VALUES
-          (?1, ?2, ?3, ?4);
-  );
-  rc = sqlite3_prepare_v2(conn, sql, strlen(sql) + 1,
-			  &stmts[STMT_INSERT_COMMIT], NULL);
-  if (rc != SQLITE_OK) {
-	  goto err_stmt;
-  }
-
-  sql = SQL(
-      -- ?\n
-      SELECT file_id FROM files WHERE name = ?1 LIMIT 1;
-  );
-  rc = sqlite3_prepare_v2(conn, sql, strlen(sql) + 1, &stmts[STMT_GET_FILE_ID],
-			  NULL);
-  if (rc != SQLITE_OK) {
-	  goto err_stmt;
-  }
-
-  sql = SQL(
-      -- ?\n
-      INSERT INTO files(name) VALUES (?1);
-  );
-  rc = sqlite3_prepare_v2(conn, sql, strlen(sql) + 1, &stmts[STMT_INSERT_FILE],
-			  NULL);
-  if (rc != SQLITE_OK) {
-	  goto err_stmt;
-  }
-
-  sql = SQL(
-      -- ?\n
-      INSERT INTO changes(commit_id, file_id) VALUES (?1, ?2);
-  );
-  rc = sqlite3_prepare_v2(conn, sql, strlen(sql) + 1,
-			  &stmts[STMT_INSERT_CHANGE], NULL);
-  if (rc != SQLITE_OK) {
-	  goto err_stmt;
-  }
-
-  sql = SQL(
-      -- ? \n
-      UPDATE
-          commits
-      SET
-          generation = parent.generation + 1
-      FROM
-          commits AS parent
-      WHERE
-          commits.commit_id = ?1
-          AND parent.generation IS NOT NULL
-          AND parent.commit_hash = commits.parent_hash
-          AND parent.repository_id = commits.repository_id;
-  );
-  rc = sqlite3_prepare_v2(conn, sql, strlen(sql) + 1,
-			  &stmts[STMT_UPDATE_GENERATION], NULL);
-  if (rc != SQLITE_OK) {
-	  goto err_stmt;
-  }
-
-  sql = SQL(
-      -- ? \n
-      UPDATE
-          refs
-      SET
-          is_dirty = NULL
-      WHERE
-          repository_id = ?1
-          AND full_name = ?2;
-  );
-  rc = sqlite3_prepare_v2(conn, sql, strlen(sql) + 1,
-			  &stmts[STMT_UPDATE_REF_CLEAN], NULL);
-  if (rc != SQLITE_OK) {
-	  goto err_stmt;
-  }
-
-  sql = SQL(
-      -- ? \n
-      UPDATE
-          refs
-      SET
-          is_dirty = 1
-      WHERE
-          repository_id = ?1;
-  );
-  rc = sqlite3_prepare_v2(conn, sql, strlen(sql) + 1,
-			  &stmts[STMT_UPDATE_REFS_DIRTY], NULL);
-  if (rc != SQLITE_OK) {
-	  goto err_stmt;
-  }
-
-  sql = SQL(
-      -- ? \n
-      DELETE FROM
-          refs
-      WHERE
-          repository_id = ?1
-          AND is_dirty IS NOT NULL;
-  );
-  rc = sqlite3_prepare_v2(conn, sql, strlen(sql) + 1,
-			  &stmts[STMT_DELETE_DIRTY_REFS], NULL);
-  if (rc != SQLITE_OK) {
-	  goto err_stmt;
-  }
-
-  sql = SQL(
-      -- ? \n
-      SELECT
-          commit_id
-      FROM
-          refs
-      WHERE
-          repository_id = ?1
-          AND full_name = ?2
-      LIMIT
-          1;
-  );
-  rc = sqlite3_prepare_v2(conn, sql, strlen(sql) + 1,
-			  &stmts[STMT_GET_REF_COMMIT_ID], NULL);
-  if (rc != SQLITE_OK) {
-	  goto err_stmt;
-  }
-
-  sql = SQL(
-      -- ? \n
-      INSERT INTO refs(
-          full_name,
-          show_name,
-          commit_id,
-          ref_time,
-          ref_type,
-          is_dirty, // always NULL here
-          repository_id
-      )
-      VALUES
-          (?1, ?2, ?3, ?4, ?5, NULL, ?6)
-      ON CONFLICT(repository_id, full_name)
-      DO UPDATE SET
-          show_name = excluded.show_name,
-          commit_id = excluded.commit_id,
-          ref_time = excluded.ref_time,
-          ref_type = excluded.ref_type,
-          is_dirty = NULL;
-  );
-  rc = sqlite3_prepare_v2(conn, sql, strlen(sql) + 1, &stmts[STMT_UPSERT_REF],
-			  NULL);
-  if (rc != SQLITE_OK) {
-	  goto err_stmt;
-  }
-
-  connection = conn;
-  return true;
+	connection = conn;
+	return true;
 
 err_stmt:
 	info("%s", sqlite3_errmsg(conn));
