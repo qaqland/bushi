@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 
 #include <assert.h>
+#include <errno.h>
 #include <git2.h>
 #include <git2/commit.h>
 #include <git2/config.h>
@@ -21,11 +22,45 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#define info(FMT, ...)                                                         \
-	fprintf(stdout, "%5d | %-16.16s " FMT "\n", __LINE__,                  \
-		__func__ __VA_OPT__(, ) __VA_ARGS__)
+static int verbosity = 0;
+
+#define E(FMT, ...)                                                            \
+	do {                                                                   \
+		fprintf(stderr, "[E] %-4d " FMT "\n",                          \
+			__LINE__ __VA_OPT__(, ) __VA_ARGS__);                  \
+		exit(1);                                                       \
+	} while (0)
+
+#define I(FMT, ...)                                                            \
+	do {                                                                   \
+		fprintf(stdout, "[I] " FMT "\n" __VA_OPT__(, ) __VA_ARGS__);   \
+	} while (0)
+
+#define D(FMT, ...)                                                            \
+	do {                                                                   \
+		if (verbosity >= 1) {                                          \
+			fprintf(stderr, "[D] %-4d " FMT "\n",                  \
+				__LINE__ __VA_OPT__(, ) __VA_ARGS__);          \
+		}                                                              \
+	} while (0)
+
+#define T(FMT, ...)                                                            \
+	do {                                                                   \
+		if (verbosity >= 2) {                                          \
+			fprintf(stderr, "[T] %-4d " FMT "\n",                  \
+				__LINE__ __VA_OPT__(, ) __VA_ARGS__);          \
+		}                                                              \
+	} while (0)
 
 #define SQL(...) #__VA_ARGS__
+
+#if defined(__GNUC__) || defined(__clang__)
+#define likely(x) __builtin_expect(!!(x), 1)
+#define unlikely(x) __builtin_expect(!!(x), 0)
+#else
+#define likely(x) (x)
+#define unlikely(x) (x)
+#endif
 
 enum {
 	STMT_UPSERT_REPOSITORY,
@@ -58,21 +93,18 @@ enum {
 	REF_TYPE_TAG = 2,
 };
 
-static sqlite3_stmt *stmts[STMT_COUNT];
 // clang-format off
-static const char *stmt_sql[STMT_COUNT] = {
+const char *texts[STMT_COUNT] = {
 	[STMT_UPSERT_REPOSITORY] = SQL(
 		INSERT INTO repositories
 		(      repository_name
 		     , repository_path
-		     , repository_head
 		)
 		VALUES
-		    (?1, ?2, ?3)
+		    (?1, ?2)
 		ON CONFLICT(repository_name)
 		    DO UPDATE SET
-		      repository_path = excluded.repository_path
-		    , repository_head = excluded.repository_head;
+		      repository_path = excluded.repository_path;
 	),
 	[STMT_GET_REPOSITORY_ID] = SQL(
 		SELECT repository_id
@@ -174,6 +206,8 @@ static const char *stmt_sql[STMT_COUNT] = {
 	),
 };
 // clang-format on
+
+static sqlite3_stmt *stmts[STMT_COUNT];
 static sqlite3 *connection;
 static int64_t repository_id;
 static git_repository *repository_git;
@@ -235,40 +269,39 @@ name_from_path(const char *path)
 }
 
 static void
+db_exec(const char *sql)
+{
+	if (unlikely(!connection)) {
+		E("exec called without a database connection");
+	}
+
+	if (sql == NULL || sql[0] == '\0') {
+		E("empty SQL statement");
+	}
+
+	D("execute sql: %s", sql);
+
+	char *errmsg = NULL;
+	int rc = sqlite3_exec(connection, sql, NULL, NULL, &errmsg);
+	if (rc != SQLITE_OK) {
+		E("exec error: %s [sql: %s]", errmsg, sql);
+	}
+}
+
+static void
 db_begin_transaction(void)
 {
-	char *errmsg = NULL;
-	int rc;
-
-	assert(connection);
-
-	rc =
-	    sqlite3_exec(connection, "BEGIN TRANSACTION;", NULL, NULL, &errmsg);
-	if (rc != SQLITE_OK) {
-		info("? %s", errmsg);
-		sqlite3_free(errmsg);
-		abort();
-	}
+	db_exec("BEGIN TRANSACTION");
 }
 
 static void
 db_end_transaction(void)
 {
-	char *errmsg = NULL;
-	int rc;
-
-	assert(connection);
-
-	rc = sqlite3_exec(connection, "COMMIT;", NULL, NULL, &errmsg);
-	if (rc != SQLITE_OK) {
-		info("? %s", errmsg);
-		sqlite3_free(errmsg);
-		abort();
-	}
+	db_exec("COMMIT");
 }
 
-static bool
-db_prepare(const char *path)
+static void
+db_setup(const char *path)
 {
 	sqlite3 *conn = NULL;
 	char *errmsg = NULL;
@@ -277,62 +310,50 @@ db_prepare(const char *path)
 	assert(path);
 	assert(!connection);
 
+	I("prepare database %s", path);
+
 	rc = sqlite3_open(path, &conn);
 	if (rc != SQLITE_OK) {
-		goto err_open;
+		E("open database '%s' failed: %s", path, sqlite3_errmsg(conn));
 	}
 
 	const char init_sql[] = {
 #embed "init.sql"
 	    , '\0'};
 
+	D("prepare database schema");
 	rc = sqlite3_exec(conn, init_sql, NULL, NULL, &errmsg);
 	if (rc != SQLITE_OK) {
-		goto err_init;
+		E("initialize schema failed: %s", errmsg);
 	}
 
+	D("prepare SQL statements");
 	for (int i = 0; i < STMT_COUNT; i++) {
-		rc = sqlite3_prepare_v2(conn, stmt_sql[i], -1, &stmts[i], NULL);
+		D("prepare statement %2d: %.32s...", i, texts[i]);
+		rc = sqlite3_prepare_v2(conn, texts[i], -1, &stmts[i], NULL);
 		if (rc != SQLITE_OK) {
-			info("? stmt %d: %s", i, sqlite3_errmsg(conn));
-			goto err_stmt;
+			E("prepare statement %2d failed: %s", i,
+			  sqlite3_errmsg(conn));
 		}
 	}
 
+	D("prepare %d statements", STMT_COUNT);
 	connection = conn;
-	return true;
-
-err_stmt:
-	info("%s", sqlite3_errmsg(conn));
-	sqlite3_close(conn);
-	return false;
-
-err_init:
-	info("%s", errmsg);
-	sqlite3_free(errmsg);
-	sqlite3_close(conn);
-	return false;
-
-err_open:
-	info("%s", sqlite3_errmsg(conn));
-	return false;
 }
 
 static void
-db_cleanup(void)
+db_teardown(void)
 {
-	sqlite3 *conn = connection; // NULL is ok
 	for (int i = 0; i < STMT_COUNT; i++) {
 		sqlite3_finalize(stmts[i]);
 	}
-	sqlite3_close(conn);
-	connection = NULL;
+	sqlite3_close(connection);
 }
 
 // ROWID is always not zero
 // remember to update head after scanning branches
-static bool
-db_sync_repository_id(const char *name, const char *path, const char *head)
+static void
+db_sync_repository_id(const char *name, const char *path)
 {
 	sqlite3_stmt *stmt = NULL;
 	int64_t id = 0;
@@ -342,36 +363,37 @@ db_sync_repository_id(const char *name, const char *path, const char *head)
 	assert(path);
 	assert(repository_id == 0);
 
+	D("upsert repository %s at %s", name, path);
+
 	stmt = stmts[STMT_UPSERT_REPOSITORY];
 	sqlite3_reset(stmt);
 	sqlite3_clear_bindings(stmt);
 
+	T("bind upsert repository name=%s path=%s", name, path);
 	sqlite3_bind_text(stmt, 1, name, -1, SQLITE_STATIC);
 	sqlite3_bind_text(stmt, 2, path, -1, SQLITE_STATIC);
-	sqlite3_bind_text(stmt, 3, head, -1, SQLITE_STATIC);
-	info("$ name: %s, path: %s, head: %s", name, path,
-	     head ? head : "NULL");
+
 	rc = sqlite3_step(stmt);
 	if (rc != SQLITE_DONE) {
-		info("? %s", sqlite3_errmsg(connection));
-		return false;
+		E("%s", sqlite3_errmsg(connection));
 	}
 
 	stmt = stmts[STMT_GET_REPOSITORY_ID];
 	sqlite3_reset(stmt);
 	sqlite3_clear_bindings(stmt);
 
+	T("bind get repository_id name=%s", name);
 	sqlite3_bind_text(stmt, 1, name, -1, SQLITE_STATIC);
-	info("$ name: %s", name);
+
 	rc = sqlite3_step(stmt);
 	if (rc != SQLITE_ROW) {
-		info("? %s", sqlite3_errmsg(connection));
-		return false;
+		E("%s", sqlite3_errmsg(connection));
 	}
+
 	id = sqlite3_column_int64(stmt, 0);
-	info("* repository_id: %ld", id);
+	T("got repository_id %ld", id);
+	D("set repository_id: %ld", id);
 	repository_id = id;
-	return true;
 }
 
 static void
@@ -385,29 +407,30 @@ db_delete_repository(const char *name)
 	sqlite3_reset(stmt);
 	sqlite3_clear_bindings(stmt);
 
-	info("* name %s", name);
+	D("delete repository %s", name);
+
+	T("bind delete repository name=%s", name);
 	sqlite3_bind_text(stmt, 1, name, -1, SQLITE_STATIC);
 	int rc = sqlite3_step(stmt);
 	if (rc != SQLITE_DONE) {
-		info("? %s", sqlite3_errmsg(connection));
+		E("%s", sqlite3_errmsg(connection));
 		return;
 	}
 	int count = sqlite3_changes(connection);
-	info("* delete count %d", count);
+	T("deleted %d rows", count);
 }
 
 static void
-git_cleanup(void)
+git_teardown(void)
 {
 	git_repository_free(repository_git);
 	git_libgit2_shutdown();
 }
 
-static bool
-git_prepare(const char *git_dir)
+static void
+git_setup(const char *git_dir)
 {
 	git_repository *repo_git;
-	bool is_ok = true;
 	int rc = 0;
 
 	assert(git_dir);
@@ -416,41 +439,37 @@ git_prepare(const char *git_dir)
 	git_libgit2_opts(GIT_OPT_ENABLE_CACHING, false);
 	git_libgit2_opts(GIT_OPT_ENABLE_STRICT_HASH_VERIFICATION, false);
 
-	info("$ GIT_DIR: %s", git_dir);
+	I("open GIT_DIR %s", git_dir);
 	setenv("GIT_DIR", git_dir, 1);
 
 	rc = git_repository_open_bare(&repo_git, git_dir);
 	if (rc < 0) {
-		const git_error *e = git_error_last();
-		info("%s", e->message);
-		return false;
+		E("%s", git_error_last()->message);
 	}
 
 	git_config *config;
 	rc = git_repository_config_snapshot(&config, repo_git);
 	if (rc < 0) {
+		E("%s", git_error_last()->message);
 	}
 
 	// head is the same, but update it after we scan all branches
 	const char *name = NULL;
 	rc = git_config_get_string(&name, config, "bushi.name");
-	if (rc < 0) {
+	if (rc < 0 && rc != GIT_ENOTFOUND) {
+		E("%s", git_error_last()->message);
 	}
 
 	if (!name || !name[0]) {
 		name = name_from_path(git_dir);
 	}
 	if (!name) {
-		return false;
+		E("cannot derive repository name from %s", git_dir);
 	}
-	is_ok = db_sync_repository_id(name, git_dir, NULL);
-	if (!is_ok) {
-		return false;
-	}
+	db_sync_repository_id(name, git_dir);
 
 	repository_git = repo_git;
 	git_config_free(config);
-	return true;
 }
 
 static void
@@ -460,16 +479,19 @@ db_update_ref_clean(const char *full_name)
 
 	assert(full_name);
 
-	info("$ repository_id: %ld, full_name: %s", repository_id, full_name);
+	D("mark ref clean: %s", full_name);
 
 	sqlite3_reset(stmt);
 	sqlite3_clear_bindings(stmt);
+	T("bind ref clean repository_id=%ld full_name=%s", repository_id,
+	  full_name);
 	sqlite3_bind_int64(stmt, 1, repository_id);
 	sqlite3_bind_text(stmt, 2, full_name, -1, SQLITE_STATIC);
 	int rc = sqlite3_step(stmt);
 	if (rc != SQLITE_DONE) {
-		info("? %s", sqlite3_errmsg(connection));
+		E("%s", sqlite3_errmsg(connection));
 	}
+	T("marked ref clean");
 }
 
 static void
@@ -477,18 +499,18 @@ db_update_refs_dirty(void)
 {
 	sqlite3_stmt *stmt = stmts[STMT_UPDATE_REFS_DIRTY];
 
-	info("$ repository_id: %ld", repository_id);
+	D("mark all refs dirty for repository %ld", repository_id);
 
 	sqlite3_reset(stmt);
 	sqlite3_clear_bindings(stmt);
+	T("bind refs dirty repository_id=%ld", repository_id);
 	sqlite3_bind_int64(stmt, 1, repository_id);
 	int rc = sqlite3_step(stmt);
 	if (rc != SQLITE_DONE) {
-		info("? %s", sqlite3_errmsg(connection));
-		return;
+		E("%s", sqlite3_errmsg(connection));
 	}
 	int count = sqlite3_changes(connection);
-	info("* dirty refs: %d", count);
+	T("marked %d refs dirty", count);
 }
 
 static void
@@ -496,18 +518,18 @@ db_delete_dirty_refs(void)
 {
 	sqlite3_stmt *stmt = stmts[STMT_DELETE_DIRTY_REFS];
 
-	info("$ repository_id: %ld", repository_id);
+	D("delete dirty refs for repository %ld", repository_id);
 
 	sqlite3_reset(stmt);
 	sqlite3_clear_bindings(stmt);
+	T("bind delete dirty refs repository_id=%ld", repository_id);
 	sqlite3_bind_int64(stmt, 1, repository_id);
 	int rc = sqlite3_step(stmt);
 	if (rc != SQLITE_DONE) {
-		info("? %s", sqlite3_errmsg(connection));
-		return;
+		E("%s", sqlite3_errmsg(connection));
 	}
 	int count = sqlite3_changes(connection);
-	info("* delete dirty refs: %d", count);
+	T("deleted %d dirty refs", count);
 }
 
 static int64_t
@@ -519,25 +541,27 @@ db_get_ref_commit(const char *full_name)
 
 	assert(full_name);
 
-	info("$ reference full_name: %s", full_name);
+	D("lookup ref %s", full_name);
 
 	sqlite3_reset(stmt);
 	sqlite3_clear_bindings(stmt);
 
+	T("bind ref commit repository_id=%ld full_name=%s", repository_id,
+	  full_name);
 	sqlite3_bind_int64(stmt, 1, repository_id);
 	sqlite3_bind_text(stmt, 2, full_name, -1, SQLITE_STATIC);
+
 	rc = sqlite3_step(stmt);
 	switch (rc) {
 	case SQLITE_ROW:
 		commit_id = sqlite3_column_int64(stmt, 0);
-		info("* commit_id: %ld", commit_id);
+		T("got ref commit_id %ld", commit_id);
 		break;
 	case SQLITE_DONE:
-		info("? reference not found");
+		T("ref commit not found");
 		break;
 	default:
-		info("? %s", sqlite3_errmsg(connection));
-		break;
+		E("%s", sqlite3_errmsg(connection));
 	}
 	return commit_id;
 }
@@ -550,8 +574,7 @@ db_upsert_ref(const char *full_name, int64_t commit_id, int64_t ref_time)
 	assert(full_name);
 	assert(commit_id);
 
-	info("$ name: %s, commit_id: %ld, ref_time: %ld", full_name, commit_id,
-	     ref_time);
+	D("upsert ref %s -> commit_id %ld", full_name, commit_id);
 
 	char *show_name = NULL;
 
@@ -559,14 +582,14 @@ db_upsert_ref(const char *full_name, int64_t commit_id, int64_t ref_time)
 	if (strncmp(full_name, "refs/heads/", strlen("refs/heads/")) == 0) {
 		ref_type = REF_TYPE_BRANCH;
 		show_name = strdup(full_name + strlen("refs/heads/"));
-		info("* reference is branch");
+		D("ref is a branch");
 	} else if (strncmp(full_name, "refs/tags/", strlen("refs/tags/")) ==
 		   0) {
 		ref_type = REF_TYPE_TAG;
 		show_name = strdup(full_name + strlen("refs/tags/"));
-		info("* reference is tag");
+		D("ref is a tag");
 	} else {
-		info("? non-branch/tag reference");
+		D("skip non-branch/tag ref %s", full_name);
 		return;
 	}
 
@@ -579,6 +602,10 @@ db_upsert_ref(const char *full_name, int64_t commit_id, int64_t ref_time)
 	sqlite3_reset(stmt);
 	sqlite3_clear_bindings(stmt);
 
+	T("bind upsert ref full_name=%s show_name=%s commit_id=%ld "
+	  "ref_time=%ld "
+	  "ref_type=%d repository_id=%ld",
+	  full_name, show_name, commit_id, ref_time, ref_type, repository_id);
 	sqlite3_bind_text(stmt, 1, full_name, -1, SQLITE_STATIC);
 	sqlite3_bind_text(stmt, 2, show_name, -1, SQLITE_STATIC);
 	sqlite3_bind_int64(stmt, 3, commit_id);
@@ -588,8 +615,9 @@ db_upsert_ref(const char *full_name, int64_t commit_id, int64_t ref_time)
 
 	int rc = sqlite3_step(stmt);
 	if (rc != SQLITE_DONE) {
-		info("? %s", sqlite3_errmsg(connection));
+		E("%s", sqlite3_errmsg(connection));
 	}
+	T("upserted ref");
 	free(show_name);
 }
 
@@ -602,7 +630,7 @@ db_get_file_id(const char *name)
 
 	assert(name);
 
-	info("$ file_name: %s", name);
+	T("lookup file %s", name);
 
 	stmt = stmts[STMT_GET_FILE_ID];
 	sqlite3_reset(stmt);
@@ -620,16 +648,17 @@ db_get_file_id(const char *name)
 	sqlite3_reset(stmt);
 	sqlite3_clear_bindings(stmt);
 
+	T("bind insert file name=%s", name);
 	sqlite3_bind_text(stmt, 1, name, -1, SQLITE_STATIC);
 	rc = sqlite3_step(stmt);
 	if (rc != SQLITE_DONE) {
-		info("? %s", sqlite3_errmsg(connection));
+		E("%s", sqlite3_errmsg(connection));
 		goto done;
 	}
 	id = sqlite3_last_insert_rowid(connection);
 
 done:
-	info("* file_id: %ld", id);
+	T("got file_id %ld", id);
 	return id;
 }
 
@@ -639,7 +668,7 @@ db_insert_change(int64_t commit_id, int64_t file_id)
 	assert(commit_id);
 	assert(file_id);
 
-	info("$ commit_id: %ld, file_id: %ld", commit_id, file_id);
+	T("record change: commit %ld, file %ld", commit_id, file_id);
 
 	sqlite3_stmt *stmt = stmts[STMT_INSERT_CHANGE];
 	sqlite3_reset(stmt);
@@ -650,9 +679,8 @@ db_insert_change(int64_t commit_id, int64_t file_id)
 
 	int rc = sqlite3_step(stmt);
 	if (rc != SQLITE_DONE) {
-		info("? %s", sqlite3_errmsg(connection));
+		E("%s", sqlite3_errmsg(connection));
 	}
-	return;
 }
 
 static int64_t
@@ -670,18 +698,18 @@ db_get_commit_id(const char *commit_hash)
 
 	sqlite3_bind_int(stmt, 1, repository_id);
 	sqlite3_bind_text(stmt, 2, commit_hash, -1, SQLITE_STATIC);
-	info("$ commit_hash: %s", commit_hash);
+	T("lookup commit %s", commit_hash);
 	rc = sqlite3_step(stmt);
 	switch (rc) {
 	case SQLITE_ROW:
 		id = sqlite3_column_int64(stmt, 0);
-		info("* commit_id: %ld", id);
+		T("got commit_id %ld", id);
 		break;
 	case SQLITE_DONE:
-		info("* commit not found");
+		T("commit not found");
 		break;
 	default:
-		info("? %s", sqlite3_errmsg(connection));
+		E("%s", sqlite3_errmsg(connection));
 		break;
 	}
 
@@ -703,6 +731,8 @@ db_insert_commit(const char *commit_hash, const char *parent_hash)
 	sqlite3_stmt *stmt = stmts[STMT_INSERT_COMMIT];
 	sqlite3_reset(stmt);
 	sqlite3_clear_bindings(stmt);
+	T("bind insert commit hash=%s parent_hash=%s repository_id=%ld",
+	  commit_hash, parent_hash ? parent_hash : "NULL", repository_id);
 	sqlite3_bind_text(stmt, 1, commit_hash, -1, NULL);
 	if (parent_hash) {
 		assert(parent_hash[0]);
@@ -715,17 +745,17 @@ db_insert_commit(const char *commit_hash, const char *parent_hash)
 
 	int rc = sqlite3_step(stmt);
 	if (rc != SQLITE_DONE) {
-		info("? %s", sqlite3_errmsg(connection));
+		E("%s", sqlite3_errmsg(connection));
 		goto done;
 	}
 	id = sqlite3_last_insert_rowid(connection);
 
 done:
-	info("* id: %ld", id);
+	T("insert commit %ld", id);
 	return id;
 }
 
-static bool
+static void
 db_update_generation(int64_t commit_id)
 {
 	assert(commit_id);
@@ -734,20 +764,18 @@ db_update_generation(int64_t commit_id)
 	sqlite3_reset(stmt);
 	sqlite3_clear_bindings(stmt);
 
-	info("$ commit_id: %ld", commit_id);
+	T("update generation for commit %ld", commit_id);
 	sqlite3_bind_int64(stmt, 1, commit_id);
 
 	int rc = sqlite3_step(stmt);
 	if (rc != SQLITE_DONE) {
-		info("? %s", sqlite3_errmsg(connection));
-		return false;
+		E("%s", sqlite3_errmsg(connection));
 	}
 
 	int rf = sqlite3_changes(connection);
 	if (rf == 0) {
-		info("? no changes");
+		T("generation already set");
 	}
-	return true;
 }
 
 static const char *
@@ -808,7 +836,7 @@ sync_commit_list(git_commit *commit)
 		}
 	}
 	git_commit_free(walker);
-	info("from %s to %s", new_hash, old_hash ? old_hash : "NULL");
+	I("scan commit range %s..%s", old_hash ? old_hash : "NULL", new_hash);
 
 	char commit_range[GIT_OID_MAX_HEXSIZE * 2 + 3];
 	if (old_hash) {
@@ -833,13 +861,23 @@ sync_commit_list(git_commit *commit)
 	// git log --pretty=format:%n%H --name-only --first-parent --reverse
 
 	int pipefd[2];
-	pipe(pipefd);
+	if (pipe(pipefd) < 0) {
+		E("pipe failed: %s", strerror(errno));
+	}
+
 	pid_t pid = fork();
+	if (pid < 0) {
+		close(pipefd[0]);
+		close(pipefd[1]);
+		E("fork failed: %s", strerror(errno));
+	}
+
 	if (pid == 0) {
 		close(pipefd[0]);
 		dup2(pipefd[1], STDOUT_FILENO);
 		close(pipefd[1]);
 		execvp("git", args);
+		E("execvp failed: %s", strerror(errno));
 	}
 	close(pipefd[1]);
 
@@ -862,7 +900,7 @@ sync_commit_list(git_commit *commit)
 			db_begin_transaction();
 			int64_t id = db_get_commit_id(line_buffer);
 			if (id == 0) {
-				break;
+				E("commit %s not found", line_buffer);
 			}
 			commit_id = id;
 			db_update_generation(commit_id);
@@ -880,7 +918,12 @@ sync_commit_list(git_commit *commit)
 
 	close(pipefd[0]);
 	int status;
-	waitpid(pid, &status, 0);
+	if (waitpid(pid, &status, 0) < 0) {
+		E("waitpid failed: %s", strerror(errno));
+	}
+	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+		E("git log failed");
+	}
 }
 
 static int
@@ -889,35 +932,31 @@ sync_reference(const char *name, void *payload)
 	(void)payload;
 	int rc;
 
-	info("$ reference: %s", name);
+	D("walk reference %s", name);
 
 	if (strncmp(name, "refs/heads/", strlen("refs/heads/")) &&
 	    strncmp(name, "refs/tags/", strlen("refs/tags/"))) {
-		info("? skip non-branch/tag reference");
+		D("skip %s (not a branch or tag)", name);
 		return 0;
 	}
 
 	git_reference *ref;
 	rc = git_reference_lookup(&ref, repository_git, name);
 	if (rc < 0) {
-		const git_error *e = git_error_last();
-		info("? %s", e->message);
-		return 0;
+		E("%s", git_error_last()->message);
 	}
 
 	git_commit *target;
 	rc = git_reference_peel((git_object **)&target, ref, GIT_OBJECT_COMMIT);
 	if (rc < 0) {
-		const git_error *e = git_error_last();
-		info("? %s", e->message);
-		return 0;
+		E("%s", git_error_last()->message);
 	}
 	git_reference_free(ref);
 	const char *commit_hash = commit_hash_from_object(target);
 	int64_t commit_id = db_get_commit_id(commit_hash);
 
 	if (db_get_ref_commit(name) == commit_id && commit_id != 0) {
-		info("* reference commit is the same, skip");
+		D("skip %s (same commit)", name);
 		git_commit_free(target);
 		db_update_ref_clean(name);
 		return 0;
@@ -948,11 +987,10 @@ main(int argc, char **argv)
 	char *repo_name = NULL;
 	bool is_delete = false;
 	char *db_path = NULL;
-	bool is_ok;
 	int rc;
 	int opt;
 
-	while ((opt = getopt(argc, argv, "+p:d:t:")) != -1) {
+	while ((opt = getopt(argc, argv, "+p:d:t:vh")) != -1) {
 		switch (opt) {
 		case 'p':
 			repo_path = realpath(optarg, NULL);
@@ -964,40 +1002,43 @@ main(int argc, char **argv)
 		case 't':
 			db_path = strdup(optarg);
 			break;
+		case 'v':
+			verbosity++;
+			break;
+		case 'h':
+			print_usage();
+			exit(0);
 		default:
 			print_usage();
-			return EXIT_FAILURE;
+			exit(1);
 		}
 	}
 
 	if (optind != argc || !db_path ||
 	    (is_delete ? !repo_name : !repo_path)) {
 		print_usage();
-		return EXIT_FAILURE;
+		exit(1);
 	}
 
-	is_ok = db_prepare(db_path);
-	if (!is_ok) {
-	}
+	db_setup(db_path);
 
 	if (is_delete) {
 		db_delete_repository(repo_name);
-		return EXIT_SUCCESS;
+		exit(0);
 	}
 
-	is_ok = git_prepare(repo_path);
-	if (!is_ok) {
-	}
+	git_setup(repo_path);
 
 	db_update_refs_dirty();
 
 	rc = git_reference_foreach_name(repository_git, sync_reference, NULL);
 	if (rc < 0) {
+		E("failed to iterate references");
 	}
 
 	db_delete_dirty_refs();
 
-	git_cleanup();
-	db_cleanup();
-	return EXIT_SUCCESS;
+	git_teardown();
+	db_teardown();
+	exit(0);
 }
