@@ -64,7 +64,8 @@ static int verbosity = 0;
 
 enum {
 	STMT_UPSERT_REPOSITORY,
-	STMT_GET_REPOSITORY_ID,
+	STMT_GET_REPOSITORY_BY_PATH,
+	STMT_GET_REPOSITORY_BY_NAME,
 	STMT_DELETE_REPOSITORY,
 
 	STMT_GET_COMMIT_ID,
@@ -102,12 +103,20 @@ const char *texts[STMT_COUNT] = {
 		)
 		VALUES
 		    (?1, ?2)
-		ON CONFLICT(repository_name)
+		ON CONFLICT(repository_path)
 		    DO UPDATE SET
-		      repository_path = excluded.repository_path;
+		      repository_name = excluded.repository_name;
 	),
-	[STMT_GET_REPOSITORY_ID] = SQL(
+	[STMT_GET_REPOSITORY_BY_PATH] = SQL(
 		SELECT repository_id
+		     , repository_name
+		  FROM repositories
+		 WHERE repository_path = ?1
+		 LIMIT 1;
+	),
+	[STMT_GET_REPOSITORY_BY_NAME] = SQL(
+		SELECT repository_id
+		     , repository_path
 		  FROM repositories
 		 WHERE repository_name = ?1
 		 LIMIT 1;
@@ -356,7 +365,10 @@ static void
 db_sync_repository_id(const char *name, const char *path)
 {
 	sqlite3_stmt *stmt = NULL;
-	int64_t id = 0;
+	int64_t id_by_path = 0;
+	int64_t id_by_name = 0;
+	const char *old_name = NULL;
+	const char *old_path = NULL;
 	int rc;
 
 	assert(name);
@@ -364,6 +376,56 @@ db_sync_repository_id(const char *name, const char *path)
 	assert(repository_id == 0);
 
 	D("upsert repository %s at %s", name, path);
+
+	stmt = stmts[STMT_GET_REPOSITORY_BY_PATH];
+	sqlite3_reset(stmt);
+	sqlite3_clear_bindings(stmt);
+
+	T("bind get repository by path=%s", path);
+	sqlite3_bind_text(stmt, 1, path, -1, SQLITE_STATIC);
+
+	rc = sqlite3_step(stmt);
+	if (rc == SQLITE_ROW) {
+		id_by_path = sqlite3_column_int64(stmt, 0);
+		old_name = (const char *)sqlite3_column_text(stmt, 1);
+	} else if (rc != SQLITE_DONE) {
+		E("%s", sqlite3_errmsg(connection));
+	}
+
+	stmt = stmts[STMT_GET_REPOSITORY_BY_NAME];
+	sqlite3_reset(stmt);
+	sqlite3_clear_bindings(stmt);
+
+	T("bind get repository by name=%s", name);
+	sqlite3_bind_text(stmt, 1, name, -1, SQLITE_STATIC);
+
+	rc = sqlite3_step(stmt);
+	if (rc == SQLITE_ROW) {
+		id_by_name = sqlite3_column_int64(stmt, 0);
+		old_path = (const char *)sqlite3_column_text(stmt, 1);
+	} else if (rc != SQLITE_DONE) {
+		E("%s", sqlite3_errmsg(connection));
+	}
+
+	if (id_by_path != 0 && id_by_name != 0 && id_by_path != id_by_name) {
+		E("repository conflict:\n"
+		  "    path '%s' is already used by '%s'\n"
+		  "    name '%s' is already used by '%s'\n"
+		  "    resolve with one of:\n"
+		  "      1. bushi-index -t DATABASE -d %s\n"
+		  "      2. git config bushi.name new-repo-name",
+		  path, old_name, name, old_path, name);
+	}
+
+	if (id_by_path == 0 && id_by_name != 0) {
+		E("repository conflict:\n"
+		  "    path '%s' is new\n"
+		  "    name '%s' is already used by '%s'\n"
+		  "    resolve with one of:\n"
+		  "      1. bushi-index -t DATABASE -d %s\n"
+		  "      2. git config bushi.name new-repo-name",
+		  path, name, old_path, name);
+	}
 
 	stmt = stmts[STMT_UPSERT_REPOSITORY];
 	sqlite3_reset(stmt);
@@ -378,22 +440,21 @@ db_sync_repository_id(const char *name, const char *path)
 		E("%s", sqlite3_errmsg(connection));
 	}
 
-	stmt = stmts[STMT_GET_REPOSITORY_ID];
+	stmt = stmts[STMT_GET_REPOSITORY_BY_PATH];
 	sqlite3_reset(stmt);
 	sqlite3_clear_bindings(stmt);
 
-	T("bind get repository_id name=%s", name);
-	sqlite3_bind_text(stmt, 1, name, -1, SQLITE_STATIC);
+	T("bind get repository_id path=%s", path);
+	sqlite3_bind_text(stmt, 1, path, -1, SQLITE_STATIC);
 
 	rc = sqlite3_step(stmt);
 	if (rc != SQLITE_ROW) {
 		E("%s", sqlite3_errmsg(connection));
 	}
 
-	id = sqlite3_column_int64(stmt, 0);
-	T("got repository_id %ld", id);
-	D("set repository_id: %ld", id);
-	repository_id = id;
+	repository_id = sqlite3_column_int64(stmt, 0);
+	T("got repository_id %ld", repository_id);
+	D("set repository_id: %ld", repository_id);
 }
 
 static void
@@ -428,26 +489,31 @@ git_teardown(void)
 }
 
 static void
-git_setup(const char *git_dir)
+git_setup(const char *repo_path)
 {
 	git_repository *repo_git;
 	int rc = 0;
 
-	assert(git_dir);
+	assert(repo_path);
 
 	git_libgit2_init();
 	git_libgit2_opts(GIT_OPT_ENABLE_CACHING, false);
 	git_libgit2_opts(GIT_OPT_ENABLE_STRICT_HASH_VERIFICATION, false);
 
-	I("open GIT_DIR %s", git_dir);
-	setenv("GIT_DIR", git_dir, 1);
+	I("open repository %s", repo_path);
 
-	rc = git_repository_open_bare(&repo_git, git_dir);
+	rc = git_repository_open(&repo_git, repo_path);
 	if (rc < 0) {
 		E("%s", git_error_last()->message);
 	}
 
 	git_config *config;
+	const char *git_dir = git_repository_path(repo_git);
+	if (!git_dir || !git_dir[0]) {
+		E("cannot resolve GIT_DIR for %s", repo_path);
+	}
+	setenv("GIT_DIR", git_dir, 1);
+
 	rc = git_repository_config_snapshot(&config, repo_git);
 	if (rc < 0) {
 		E("%s", git_error_last()->message);
@@ -461,11 +527,12 @@ git_setup(const char *git_dir)
 	}
 
 	if (!name || !name[0]) {
-		name = name_from_path(git_dir);
+		name = name_from_path(repo_path);
 	}
 	if (!name) {
-		E("cannot derive repository name from %s", git_dir);
+		E("cannot derive repository name from %s", repo_path);
 	}
+
 	db_sync_repository_id(name, git_dir);
 
 	repository_git = repo_git;
@@ -976,7 +1043,7 @@ sync_reference(const char *name, void *payload)
 static void
 print_usage(void)
 {
-	puts("usage: bushi-index -t DATABASE -p GIT_DIR\n"
+	puts("usage: bushi-index -t DATABASE -p REPO_PATH\n"
 	     "       bushi-index -t DATABASE -d NAME\n");
 }
 
