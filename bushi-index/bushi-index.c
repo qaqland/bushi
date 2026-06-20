@@ -75,7 +75,6 @@ enum {
 	STMT_INSERT_FILE,
 
 	STMT_INSERT_CHANGE,
-	STMT_UPDATE_GENERATION,
 
 	STMT_GET_REF_COMMIT_ID,
 	STMT_UPSERT_REF,
@@ -136,11 +135,10 @@ const char *texts[STMT_COUNT] = {
 		INSERT INTO commits
 		(      commit_hash
 		     , parent_hash
-		     , generation
 		     , repository_id
 		)
 		VALUES
-		    (?1, ?2, ?3, ?4);
+		    (?1, ?2, ?3);
 	),
 	[STMT_GET_FILE_ID] = SQL(
 		SELECT file_id
@@ -160,15 +158,6 @@ const char *texts[STMT_COUNT] = {
 		)
 		VALUES
 		    (?1, ?2);
-	),
-	[STMT_UPDATE_GENERATION] = SQL(
-		UPDATE commits
-		   SET generation = parent.generation + 1
-		  FROM commits AS parent
-		 WHERE commits.commit_id = ?1
-		   AND parent.generation IS NOT NULL
-		   AND parent.commit_hash = commits.parent_hash
-		   AND parent.repository_id = commits.repository_id;
 	),
 	[STMT_GET_REF_COMMIT_ID] = SQL(
 		SELECT commit_id
@@ -806,9 +795,8 @@ db_insert_commit(const char *commit_hash, const char *parent_hash)
 		sqlite3_bind_text(stmt, 2, parent_hash, -1, NULL);
 	} else {
 		sqlite3_bind_null(stmt, 2);	// root commit
-		sqlite3_bind_int64(stmt, 3, 0); // generation
 	}
-	sqlite3_bind_int64(stmt, 4, repository_id);
+	sqlite3_bind_int64(stmt, 3, repository_id);
 
 	int rc = sqlite3_step(stmt);
 	if (rc != SQLITE_DONE) {
@@ -820,29 +808,6 @@ db_insert_commit(const char *commit_hash, const char *parent_hash)
 done:
 	T("insert commit %ld", id);
 	return id;
-}
-
-static void
-db_update_generation(int64_t commit_id)
-{
-	assert(commit_id);
-
-	sqlite3_stmt *stmt = stmts[STMT_UPDATE_GENERATION];
-	sqlite3_reset(stmt);
-	sqlite3_clear_bindings(stmt);
-
-	T("update generation for commit %ld", commit_id);
-	sqlite3_bind_int64(stmt, 1, commit_id);
-
-	int rc = sqlite3_step(stmt);
-	if (rc != SQLITE_DONE) {
-		E("%s", sqlite3_errmsg(connection));
-	}
-
-	int rf = sqlite3_changes(connection);
-	if (rf == 0) {
-		T("generation already set");
-	}
 }
 
 static const char *
@@ -970,7 +935,6 @@ sync_commit_list(git_commit *commit)
 				E("commit %s not found", line_buffer);
 			}
 			commit_id = id;
-			db_update_generation(commit_id);
 			continue;
 		}
 		// update commit_change_files

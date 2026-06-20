@@ -15,7 +15,6 @@ CREATE TABLE IF NOT EXISTS commits
 (      commit_id        INTEGER PRIMARY KEY AUTOINCREMENT
      , commit_hash      TEXT    NOT NULL
      , parent_hash      TEXT                    -- only first parent
-     , generation       INTEGER                 -- NOT NULL after stage2
      , repository_id    INTEGER NOT NULL
 ) STRICT;
 
@@ -29,46 +28,7 @@ CREATE INDEX IF NOT EXISTS idx_parent_hash
     ON commits (
        repository_id
      , parent_hash
-       )
- WHERE generation IS NOT NULL;
-
-CREATE TABLE IF NOT EXISTS ancestors
-(      commit_id        INTEGER NOT NULL
-     , exponent         INTEGER NOT NULL        -- 2^n generation
-     , ancestor_id      INTEGER NOT NULL        -- aka. commit_id
-     , PRIMARY KEY (commit_id, exponent)
-) WITHOUT ROWID, STRICT;
-
-CREATE TRIGGER IF NOT EXISTS tgr_ancestor
- AFTER UPDATE OF generation
-    ON commits FOR EACH ROW
-  WHEN NEW.parent_hash IS NOT NULL
-BEGIN
-    INSERT INTO ancestors (commit_id, exponent, ancestor_id)
-      WITH RECURSIVE skip_list_cte (commit_id, exponent, ancestor_id) AS (
-          SELECT NEW.commit_id
-               , 0 AS exponent
-               , c.commit_id AS ancestor_id
-            FROM commits AS c
-           WHERE repository_id = NEW.repository_id
-             AND commit_hash = NEW.parent_hash
-
-           UNION ALL
-
-          SELECT s.commit_id
-               , s.exponent + 1
-               , a.ancestor_id
-            FROM skip_list_cte AS s
-           INNER JOIN ancestors AS a
-              ON a.commit_id = s.ancestor_id
-             AND a.exponent = s.exponent
-      )
-      SELECT commit_id
-           , exponent
-           , ancestor_id
-        FROM skip_list_cte
-       WHERE ancestor_id IS NOT NULL;
-END;
+       );
 
 CREATE TABLE IF NOT EXISTS files
 (      file_id          INTEGER PRIMARY KEY AUTOINCREMENT
