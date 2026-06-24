@@ -2,7 +2,7 @@ project(
     'bushi-index',
     'c',
     meson_version: '>= 1.3.0',
-    version: '0.1',
+    version: '0.2',
     default_options: [
         'warning_level=3',
         'c_std=c23',
@@ -21,7 +21,11 @@ if not fs.exists('git/libgit.a')
 endif
 
 libgit = declare_dependency(
-    include_directories: include_directories('git'),
+    include_directories: [
+        include_directories('git'),
+        include_directories('git/compat/regex'),
+    ],
+    compile_args: ['-DNO_REGEX=NeedsStartEnd'],
     dependencies: meson.get_compiler('c').find_library(
         'git',
         dirs: [root / 'git'],
