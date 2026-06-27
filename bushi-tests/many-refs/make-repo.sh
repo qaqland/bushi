@@ -11,41 +11,37 @@ git init --quiet -b main "$repo_dir"
 
 echo "make $repo_dir * $total refs"
 
-python3 -c '
-import sys
+if [ "$total" -le 0 ] || [ "$total" -ge 10000000 ]; then
+    echo "TOTAL out of range" >&2
+    exit 1
+fi
 
-total = int(sys.argv[1])
+awk -v total="$total" 'BEGIN {
+    n_branch = int(total / 10)
+    n_annotated = int(total * 4 / 10)
+    n_lightweight = total - n_branch - n_annotated
 
-assert 0 < total < 10000000
+    printf "commit refs/heads/main\n"
+    printf "committer Test <test@qaq.land> 1700000000 +0000\n"
+    printf "data 7\n"
+    printf "initial\n"
+    printf "M 100644 inline my.txt\n"
+    printf "data 7\n"
+    printf "initial\n"
 
-n_branch = total // 10
-n_annotated = total * 4 // 10
-n_lightweight = total - n_branch - n_annotated
-
-print(f"""\
-commit refs/heads/main
-committer Test <test@qaq.land> 1700000000 +0000
-data 7
-initial
-M 100644 inline my.txt
-data 7
-initial
-""", end="")
-
-for i in range(1, n_branch + 1):
-    print(f"reset refs/heads/branch-{i:05d}")
-    print("from refs/heads/main")
-
-for i in range(1, n_lightweight + 1):
-    print(f"reset refs/tags/tag-{i:05d}")
-    print("from refs/heads/main")
-
-for i in range(1, n_annotated + 1):
-    print(f"""\
-tag annotated-{i:05d}
-from refs/heads/main
-tagger Test <test@qaq.land> 1700000000 +0000
-data 19
-annotated tag {i:05d}
-""", end="")
-' "$total" | git -C "$repo_dir" fast-import --quiet
+    for (i = 1; i <= n_branch; i++) {
+        printf "reset refs/heads/branch-%05d\n", i
+        printf "from refs/heads/main\n"
+    }
+    for (i = 1; i <= n_lightweight; i++) {
+        printf "reset refs/tags/tag-%05d\n", i
+        printf "from refs/heads/main\n"
+    }
+    for (i = 1; i <= n_annotated; i++) {
+        printf "tag annotated-%05d\n", i
+        printf "from refs/heads/main\n"
+        printf "tagger Test <test@qaq.land> 1700000000 +0000\n"
+        printf "data 19\n"
+        printf "annotated tag %05d\n", i
+    }
+}' | git -C "$repo_dir" fast-import --quiet
