@@ -30,6 +30,11 @@ CREATE INDEX IF NOT EXISTS idx_parent_hash
      , parent_hash
        );
 
+CREATE INDEX IF NOT EXISTS idx_commit_hash_only
+    ON commits (
+       commit_hash
+       );
+
 CREATE TABLE IF NOT EXISTS files
 (      file_id          INTEGER PRIMARY KEY AUTOINCREMENT
      , name             TEXT    UNIQUE NOT NULL -- just like the hashmap
@@ -38,8 +43,16 @@ CREATE TABLE IF NOT EXISTS files
 CREATE TABLE IF NOT EXISTS changes
 (      commit_id        INTEGER NOT NULL
      , file_id          INTEGER NOT NULL
+     , last_commit_id   INTEGER          -- previous commit that modified this file
      , PRIMARY KEY (commit_id, file_id)
+     , FOREIGN KEY (last_commit_id) REFERENCES commits(commit_id)
 ) WITHOUT ROWID, STRICT;
+
+CREATE INDEX IF NOT EXISTS idx_changes_file_last
+    ON changes (
+       file_id
+     , last_commit_id
+       );
 
 -- 查询 git log -- path 时我们可以直接使用 JOIN 和 files.name like
 -- 'path%'， 也可以先把相关的 file_id 查出来再用 IN
