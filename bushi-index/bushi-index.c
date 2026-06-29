@@ -755,9 +755,11 @@ idmap_get(const struct idmap *m, int64_t key)
 struct backfill_index {
 	uint32_t num_commits;
 
-	int64_t *commit_ids;	// local_idx -> global commit_id
-	uint32_t *parent_local; // local_idx -> parent local_idx (0 = none)
-	struct idmap idmap;	// global commit_id -> local_idx
+	struct idmap idmap; // global commit_id -> commit local_idx
+
+	// input commit local_idx
+	int64_t *commit_ids;	// -> global commit_id
+	uint32_t *parent_local; // -> parent local_idx (UINT32_MAX = none)
 };
 
 static void
@@ -817,6 +819,7 @@ build_backfill_index(int64_t repository_id)
 
 	CALLOC_ARRAY(idx->parent_local, num);
 	for (uint32_t i = 0; i < num; i++) {
+		idx->parent_local[i] = UINT32_MAX;
 		int64_t parent_id = parent_ids[i];
 		if (!parent_id)
 			continue;
@@ -901,7 +904,7 @@ backfill_one_file(int64_t file_id, const struct backfill_index *idx,
 		uint32_t last = curr;
 
 		uint32_t ancestor = idx->parent_local[curr];
-		while (ancestor > 0) {
+		while (ancestor != UINT32_MAX) {
 			if (buf->bitmap[ancestor / 8] &
 			    (1u << (ancestor % 8))) {
 				last = ancestor;
