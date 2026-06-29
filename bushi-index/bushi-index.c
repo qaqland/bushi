@@ -111,6 +111,10 @@ enum {
 	STMT_BACKFILL_UPDATE_CHANGE,
 	STMT_BACKFILL_LOAD_COMMITS,
 
+	STMT_STATUS_COMMIT_COUNT,
+	STMT_STATUS_FILE_COUNT,
+	STMT_STATUS_REF_COUNTS,
+
 	// keep COUNT the last
 	STMT_COUNT
 };
@@ -246,6 +250,25 @@ const char *texts[STMT_COUNT] = {
 		   AND c.parent_hash = p.commit_hash
 		 WHERE c.repository_id = ?1
 		 ORDER BY c.commit_id;
+	),
+	[STMT_STATUS_COMMIT_COUNT] = SQL(
+		SELECT COUNT(*)
+		  FROM commits
+		 WHERE repository_id = ?1;
+	),
+	[STMT_STATUS_FILE_COUNT] = SQL(
+		SELECT COUNT(DISTINCT cg.file_id)
+		  FROM changes AS cg
+		  JOIN commits AS c
+		    ON c.commit_id = cg.commit_id
+		 WHERE c.repository_id = ?1;
+	),
+	[STMT_STATUS_REF_COUNTS] = SQL(
+		SELECT ref_type
+		     , COUNT(*)
+		  FROM refs
+		 WHERE repository_id = ?1
+		 GROUP BY ref_type;
 	),
 };
 // clang-format on
@@ -1030,6 +1053,65 @@ run_sync(const char *name)
 	db_end_transaction();
 }
 
+void
+run_status(const char *name)
+{
+	sqlite3_stmt *stmt = stmts[STMT_GET_REPOSITORY_BY_NAME];
+	sqlite3_reset(stmt);
+	sqlite3_bind_text(stmt, 1, name, -1, SQLITE_STATIC);
+
+	int rc = sqlite3_step(stmt);
+	if (rc != SQLITE_ROW) {
+		err("repository not found: %s", name);
+		return;
+	}
+
+	int64_t repository_id = sqlite3_column_int64(stmt, 0);
+	const char *path = (const char *)sqlite3_column_text(stmt, 1);
+
+	int64_t commits = 0;
+	int64_t files = 0;
+	int64_t branches = 0;
+	int64_t tags = 0;
+
+	stmt = stmts[STMT_STATUS_COMMIT_COUNT];
+	sqlite3_reset(stmt);
+	sqlite3_bind_int64(stmt, 1, repository_id);
+	if (sqlite3_step(stmt) == SQLITE_ROW)
+		commits = sqlite3_column_int64(stmt, 0);
+
+	stmt = stmts[STMT_STATUS_FILE_COUNT];
+	sqlite3_reset(stmt);
+	sqlite3_bind_int64(stmt, 1, repository_id);
+	if (sqlite3_step(stmt) == SQLITE_ROW)
+		files = sqlite3_column_int64(stmt, 0);
+
+	stmt = stmts[STMT_STATUS_REF_COUNTS];
+	sqlite3_reset(stmt);
+	sqlite3_bind_int64(stmt, 1, repository_id);
+	while (sqlite3_step(stmt) == SQLITE_ROW) {
+		int ref_type = sqlite3_column_int(stmt, 0);
+		int64_t count = sqlite3_column_int64(stmt, 1);
+		switch (ref_type) {
+		case 0:
+			branches = count;
+			break;
+		case 1:
+			tags = count;
+			break;
+		default:
+			err("type not implemented yet");
+		}
+	}
+
+	printf("repository: %s\n", name);
+	printf("path:       %s\n", path);
+	printf("commits:    %" PRId64 "\n", commits);
+	printf("files:      %" PRId64 "\n", files);
+	printf("references: %" PRId64 " ", branches + tags);
+	printf("(branches: %" PRId64 ", tags: %" PRId64 ")\n", branches, tags);
+}
+
 int
 main(int argc, char *const argv[])
 {
@@ -1039,7 +1121,7 @@ main(int argc, char *const argv[])
 	int i = 0;
 	enum Mode mode = MODE_SYNC;
 
-	while ((i = getopt(argc, argv, "a:t:c:f:s:r:ldhv")) != -1) {
+	while ((i = getopt(argc, argv, "a:t:cfsrldhv")) != -1) {
 		switch (i) {
 		case 'a':
 			path = optarg;
@@ -1119,6 +1201,9 @@ main(int argc, char *const argv[])
 		break;
 	case MODE_ADD:
 		run_add(path);
+		break;
+	case MODE_STATUS:
+		run_status(name);
 		break;
 	case MODE_SYNC:
 		run_sync(name);
