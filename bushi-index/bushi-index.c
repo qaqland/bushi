@@ -223,10 +223,13 @@ const char *texts[STMT_COUNT] = {
 		   AND cg.last_commit_id IS NULL;
 	),
 	[STMT_BACKFILL_FILE_COMMITS] = SQL(
-		SELECT commit_id
-		     , last_commit_id IS NULL AS need_update
+		SELECT cg.commit_id
+		     , cg.last_commit_id IS NULL AS need_update
 		  FROM changes AS cg
-		 WHERE file_id = ?1;
+		  JOIN commits AS c
+		    ON c.commit_id = cg.commit_id
+		 WHERE cg.file_id = ?1
+		   AND c.repository_id = ?2;
 	),
 	[STMT_BACKFILL_UPDATE_CHANGE] = SQL(
 		UPDATE changes
@@ -866,18 +869,19 @@ update_last_commit_id(int64_t file_id, int64_t commit_id,
 }
 
 static void
-backfill_one_file(int64_t file_id, const struct backfill_index *idx,
-		  struct backfill_buf *buf)
+backfill_one_file(int64_t file_id, int64_t repository_id,
+		  const struct backfill_index *idx, struct backfill_buf *buf)
 {
 	sqlite3_stmt *get_commits = stmts[STMT_BACKFILL_FILE_COMMITS];
 
 	memset(buf->bitmap, 0, buf->bitmap_size);
 	size_t pending_count = 0;
 
-	// Build bitmap of all commits that touched this file,
-	// and collect pending commit_ids that need updating.
+	// Build bitmap of all commits that touched this file in this
+	// repository, and collect pending commit_ids that need updating.
 	sqlite3_reset(get_commits);
 	sqlite3_bind_int64(get_commits, 1, file_id);
+	sqlite3_bind_int64(get_commits, 2, repository_id);
 	while (sqlite3_step(get_commits) == SQLITE_ROW) {
 		int64_t commit_id = sqlite3_column_int64(get_commits, 0);
 		int need_update = sqlite3_column_int(get_commits, 1);
@@ -944,7 +948,7 @@ backfill_last_ids(int64_t repository_id)
 
 	while (sqlite3_step(list_files) == SQLITE_ROW) {
 		int64_t file_id = sqlite3_column_int64(list_files, 0);
-		backfill_one_file(file_id, idx, &buf);
+		backfill_one_file(file_id, repository_id, idx, &buf);
 	}
 
 	free(buf.pending);
