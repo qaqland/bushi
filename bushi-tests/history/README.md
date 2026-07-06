@@ -2,7 +2,7 @@
 
 ```sh
 $ ./make-repo.sh
-$ TOTAL=100000 REPO_DIR=test-repo ./make-repo.sh
+$ TOTAL=100000 ./make-repo.sh
 ```
 
 ## Verify

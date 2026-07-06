@@ -1,1 +1,3 @@
 */test-repo
+*.db
+__pycache__/
