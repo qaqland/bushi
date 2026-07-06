@@ -19,6 +19,40 @@ CREATE TABLE IF NOT EXISTS commits
      , repository_id    INTEGER NOT NULL
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS ancestors
+(      commit_id    INTEGER NOT NULL
+     , exponent     INTEGER NOT NULL
+     , ancestor_id  INTEGER NOT NULL
+     , PRIMARY KEY (commit_id, exponent)
+) WITHOUT ROWID, STRICT;
+
+CREATE TRIGGER IF NOT EXISTS trg_commits_first_depth_ancestors
+AFTER UPDATE OF first_depth ON commits
+WHEN NEW.parent_hash IS NOT NULL
+BEGIN
+    INSERT OR IGNORE INTO ancestors (commit_id, exponent, ancestor_id)
+    WITH RECURSIVE skip_list(commit_id, exponent, ancestor_id) AS (
+        SELECT NEW.commit_id,
+               0,
+               parent.commit_id
+          FROM commits AS parent
+         WHERE parent.repository_id = NEW.repository_id
+           AND parent.commit_hash = NEW.parent_hash
+
+        UNION ALL
+
+        SELECT s.commit_id,
+               s.exponent + 1,
+               a.ancestor_id
+          FROM skip_list AS s
+          JOIN ancestors AS a
+            ON a.commit_id = s.ancestor_id
+           AND a.exponent = s.exponent
+    )
+    SELECT commit_id, exponent, ancestor_id
+      FROM skip_list;
+END;
+
 CREATE INDEX IF NOT EXISTS idx_commit_hash
     ON commits (
        repository_id
