@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS commits
 (      commit_id        INTEGER PRIMARY KEY AUTOINCREMENT
      , commit_hash      TEXT    NOT NULL
      , parent_hash      TEXT                    -- only first parent
+     , first_depth      INTEGER                 -- only first parent
      , repository_id    INTEGER NOT NULL
 ) STRICT;
 

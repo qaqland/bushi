@@ -110,6 +110,7 @@ enum {
 	STMT_BACKFILL_FILE_COMMITS,
 	STMT_BACKFILL_UPDATE_CHANGE,
 	STMT_BACKFILL_LOAD_COMMITS,
+	STMT_UPDATE_FIRST_DEPTH,
 
 	STMT_STATUS_COMMIT_COUNT,
 	STMT_STATUS_FILE_COUNT,
@@ -250,6 +251,11 @@ const char *texts[STMT_COUNT] = {
 		   AND c.parent_hash = p.commit_hash
 		 WHERE c.repository_id = ?1
 		 ORDER BY c.commit_id;
+	),
+	[STMT_UPDATE_FIRST_DEPTH] = SQL(
+		UPDATE commits
+		   SET first_depth = ?1
+		 WHERE commit_id = ?2;
 	),
 	[STMT_STATUS_COMMIT_COUNT] = SQL(
 		SELECT COUNT(*)
@@ -786,6 +792,7 @@ struct backfill_index {
 	// input commit local_idx
 	int64_t *commit_ids;	// -> global commit_id
 	uint32_t *parent_local; // -> parent local_idx (UINT32_MAX = none)
+	uint32_t *first_depth;	// -> first-parent depth (UINT32_MAX = unknown)
 };
 
 static void
@@ -795,8 +802,66 @@ backfill_index_free(struct backfill_index *idx)
 		return;
 	free(idx->commit_ids);
 	free(idx->parent_local);
+	free(idx->first_depth);
 	idmap_clear(&idx->idmap);
 	free(idx);
+}
+
+struct local_index_stack {
+	uint32_t *items;
+	size_t count;
+	size_t alloc;
+};
+
+static void
+update_first_depth(int64_t commit_id, uint32_t depth)
+{
+	sqlite3_stmt *stmt = stmts[STMT_UPDATE_FIRST_DEPTH];
+	sqlite3_reset(stmt);
+	sqlite3_bind_int64(stmt, 1, depth);
+	sqlite3_bind_int64(stmt, 2, commit_id);
+
+	int rc = sqlite3_step(stmt);
+	if (rc != SQLITE_DONE)
+		err("failed to update first_depth: %s",
+		    sqlite3_errmsg(conn));
+}
+
+static void
+backfill_first_depths(struct backfill_index *idx)
+{
+	struct local_index_stack trail = {0};
+
+	for (uint32_t i = 0; i < idx->num_commits; i++) {
+		uint32_t curr = i;
+		uint32_t depth;
+
+		if (idx->first_depth[i] != UINT32_MAX)
+			continue;
+
+		trail.count = 0;
+
+		while (curr != UINT32_MAX &&
+		       idx->first_depth[curr] == UINT32_MAX) {
+			ALLOC_GROW(trail.items, trail.count + 1, trail.alloc);
+			trail.items[trail.count++] = curr;
+			curr = idx->parent_local[curr];
+		}
+
+		if (curr == UINT32_MAX)
+			depth = 0;
+		else
+			depth = idx->first_depth[curr] + 1;
+
+		while (trail.count) {
+			uint32_t v = trail.items[--trail.count];
+			idx->first_depth[v] = depth;
+			update_first_depth(idx->commit_ids[v], depth);
+			depth++;
+		}
+	}
+
+	free(trail.items);
 }
 
 static struct backfill_index *
@@ -844,8 +909,10 @@ build_backfill_index(int64_t repository_id)
 		idmap_put(&idx->idmap, idx->commit_ids[i], i);
 
 	CALLOC_ARRAY(idx->parent_local, num);
+	CALLOC_ARRAY(idx->first_depth, num);
 	for (uint32_t i = 0; i < num; i++) {
 		idx->parent_local[i] = UINT32_MAX;
+		idx->first_depth[i] = UINT32_MAX;
 		int64_t parent_id = parent_ids[i];
 		if (!parent_id)
 			continue;
@@ -890,6 +957,7 @@ update_last_commit_id(int64_t file_id, int64_t commit_id,
 		err("failed to update last_commit_id: %s",
 		    sqlite3_errmsg(conn));
 }
+
 
 static void
 backfill_one_file(int64_t file_id, int64_t repository_id,
@@ -946,14 +1014,15 @@ backfill_one_file(int64_t file_id, int64_t repository_id,
 }
 
 static void
-backfill_last_ids(int64_t repository_id)
+backfill_repository(int64_t repository_id)
 {
-	dbg("backfilling last_commit_id for repository %" PRId64,
-	    repository_id);
+	dbg("backfilling repository %" PRId64, repository_id);
 
 	struct backfill_index *idx = build_backfill_index(repository_id);
 	if (!idx)
 		return;
+
+	backfill_first_depths(idx);
 
 	// List files with at least one unfilled change in this repository.
 	sqlite3_stmt *list_files = stmts[STMT_BACKFILL_LIST_FILES];
@@ -1049,7 +1118,7 @@ run_sync(const char *name)
 	repo_clear(the_repository);
 
 	db_begin_transaction();
-	backfill_last_ids(repository_id);
+	backfill_repository(repository_id);
 	db_end_transaction();
 }
 
