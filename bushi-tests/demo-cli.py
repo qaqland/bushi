@@ -85,16 +85,30 @@ def get_repository_id(conn, name):
     return row[0]
 
 
+def get_repository_head(conn, repository_id):
+    row = conn.execute(
+        """
+        SELECT repository_head
+          FROM repositories
+         WHERE repository_id = ?
+        """,
+        (repository_id,),
+    ).fetchone()
+    if row is None or row[0] is None:
+        raise ValueError("repository head not set")
+    return row[0]
+
+
 def get_start_commit_id(conn, repository_id):
+    head = get_repository_head(conn, repository_id)
     row = conn.execute(
         """
         SELECT commit_id
           FROM refs
          WHERE repository_id = ?
-         ORDER BY ref_type, show_name
-         LIMIT 1
+           AND full_name = ?
         """,
-        (repository_id,),
+        (repository_id, f"refs/heads/{head}"),
     ).fetchone()
     if row is None:
         raise ValueError("no ref")
