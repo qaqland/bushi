@@ -11,6 +11,13 @@ CREATE TABLE IF NOT EXISTS repositories
      , repository_head  TEXT                    -- default branch
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS ancestors
+(      commit_id        INTEGER NOT NULL
+     , exponent         INTEGER NOT NULL
+     , ancestor_id      INTEGER NOT NULL
+     , PRIMARY KEY (commit_id, exponent)
+) WITHOUT ROWID, STRICT;
+
 CREATE TABLE IF NOT EXISTS commits
 (      commit_id        INTEGER PRIMARY KEY AUTOINCREMENT
      , commit_hash      TEXT    NOT NULL
@@ -19,14 +26,7 @@ CREATE TABLE IF NOT EXISTS commits
      , repository_id    INTEGER NOT NULL
 ) STRICT;
 
-CREATE TABLE IF NOT EXISTS ancestors
-(      commit_id    INTEGER NOT NULL
-     , exponent     INTEGER NOT NULL
-     , ancestor_id  INTEGER NOT NULL
-     , PRIMARY KEY (commit_id, exponent)
-) WITHOUT ROWID, STRICT;
-
-CREATE TRIGGER IF NOT EXISTS trg_commits_first_depth_ancestors
+CREATE TRIGGER IF NOT EXISTS tgr_commits_first_depth_ancestors
 AFTER UPDATE OF first_depth ON commits
 WHEN NEW.parent_hash IS NOT NULL
 BEGIN
@@ -88,12 +88,6 @@ CREATE INDEX IF NOT EXISTS idx_changes_file_last
        file_id
      , last_commit_id
        );
-
--- 查询 git log -- path 时我们可以直接使用 JOIN 和 files.name like
--- 'path%'， 也可以先把相关的 file_id 查出来再用 IN
--- 进行查询，后者可能会更快一些？但是命中 file_id
--- 的数量可能会比较多，IN 语句存在不确定性。做 git blame
--- 使用方法二更合适。
 
 CREATE TABLE IF NOT EXISTS refs
 (      full_name        TEXT    NOT NULL  -- e.g. refs/heads/fix/issue-1
