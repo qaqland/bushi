@@ -126,9 +126,10 @@ const char *texts[STMT_COUNT] = {
 		INSERT INTO repositories
 		(      repository_name
 		     , repository_path
+		     , repository_head
 		)
 		VALUES
-		    (?1, ?2);
+		    (?1, ?2, ?3);
 	),
 	[STMT_GET_REPOSITORY_BY_PATH] = SQL(
 		SELECT repository_id
@@ -447,11 +448,85 @@ value_from_config(const char *key)
 	return value;
 }
 
+static bool
+branch_exists(struct ref_store *refs, const char *name)
+{
+	struct strbuf full = STRBUF_INIT;
+	bool exists;
+
+	if (starts_with(name, "refs/heads/"))
+		strbuf_addstr(&full, name);
+	else
+		strbuf_addf(&full, "refs/heads/%s", name);
+	exists = refs_ref_exists(refs, full.buf);
+	strbuf_release(&full);
+	return exists;
+}
+
+static char *
+determine_repository_head(void)
+{
+	char *head = NULL;
+	struct strbuf head_ref = STRBUF_INIT;
+	struct ref_store *refs = get_main_ref_store(the_repository);
+	const char *fallbacks[] = {
+	    "main",
+	    "master",
+	    "dev",
+	    NULL,
+	};
+
+	head = value_from_config("bushi.head");
+	if (head && *head && branch_exists(refs, head)) {
+		dbg("repository head from config: %s", head);
+		goto out;
+	}
+	free(head);
+	head = NULL;
+
+	if (!refs_read_symbolic_ref(refs, "HEAD", &head_ref) &&
+	    branch_exists(refs, head_ref.buf)) {
+		head = xstrdup(head_ref.buf + strlen("refs/heads/"));
+		dbg("repository head from HEAD: %s", head);
+		goto out;
+	}
+
+	for (size_t i = 0; fallbacks[i]; i++) {
+		if (branch_exists(refs, fallbacks[i])) {
+			head = xstrdup(fallbacks[i]);
+			dbg("repository head from fallback: %s", head);
+			goto out;
+		}
+	}
+
+out:
+	strbuf_release(&head_ref);
+	return head;
+}
+
+static char *
+determine_repository_name(const char *path)
+{
+	char *name = NULL;
+
+	name = value_from_config("bushi.name");
+	if (name && *name) {
+		dbg("repository name from config: %s", name);
+		return name;
+	}
+	free(name);
+
+	name = name_from_path(path);
+	dbg("repository name from path: %s", name);
+	return name;
+}
+
 void
 run_add(const char *path)
 {
 	char *gitdir = NULL;
 	char *name = NULL;
+	char *head = NULL;
 
 	// 1. check if path is a git repository
 	gitdir = gitdir_from_path(path);
@@ -466,18 +541,13 @@ run_add(const char *path)
 		goto out;
 	}
 
-	// 3. git config --local --get bushi.name
-	name = value_from_config("bushi.name");
-	if (name)
-		dbg("bushi.name from config: %s", name);
-
-	// 4. if not set, derive name from path
-	if (!name || !*name) {
-		free(name);
-		name = name_from_path(path);
-		dbg("bushi.name derived from path: %s", name);
+	head = determine_repository_head();
+	if (!head) {
+		err("cannot determine repository head for: %s", path);
+		goto out;
 	}
 
+	name = determine_repository_name(path);
 	if (!name) {
 		err("cannot determine repository name for: %s", path);
 		goto out;
@@ -501,12 +571,14 @@ run_add(const char *path)
 	sqlite3_reset(stmt);
 	sqlite3_bind_text(stmt, 1, name, -1, SQLITE_STATIC);
 	sqlite3_bind_text(stmt, 2, gitdir, -1, SQLITE_STATIC);
+	sqlite3_bind_text(stmt, 3, head, -1, SQLITE_STATIC);
 
 	rc = sqlite3_step(stmt);
 	if (rc != SQLITE_DONE)
 		err("failed to add repository: %s", sqlite3_errmsg(conn));
 
 out:
+	free(head);
 	free(name);
 	free(gitdir);
 }
@@ -823,8 +895,7 @@ update_first_depth(int64_t commit_id, uint32_t depth)
 
 	int rc = sqlite3_step(stmt);
 	if (rc != SQLITE_DONE)
-		err("failed to update first_depth: %s",
-		    sqlite3_errmsg(conn));
+		err("failed to update first_depth: %s", sqlite3_errmsg(conn));
 }
 
 static void
@@ -957,7 +1028,6 @@ update_last_commit_id(int64_t file_id, int64_t commit_id,
 		err("failed to update last_commit_id: %s",
 		    sqlite3_errmsg(conn));
 }
-
 
 static void
 backfill_one_file(int64_t file_id, int64_t repository_id,
