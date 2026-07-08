@@ -96,18 +96,17 @@ enum {
 	STMT_GET_COMMIT_ID,
 	STMT_INSERT_COMMIT,
 
-	STMT_GET_FILE_ID,
-	STMT_INSERT_FILE,
+	STMT_GET_PATH_ID,
+	STMT_INSERT_PATH,
 
 	STMT_INSERT_CHANGE,
 
 	STMT_UPSERT_REF,
-
 	STMT_UPDATE_REFS_DIRTY,
 	STMT_DELETE_DIRTY_REFS,
 
-	STMT_BACKFILL_LIST_FILES,
-	STMT_BACKFILL_FILE_COMMITS,
+	STMT_BACKFILL_LIST_PATHS,
+	STMT_BACKFILL_PATH_COMMITS,
 	STMT_BACKFILL_UPDATE_CHANGE,
 	STMT_BACKFILL_LOAD_COMMITS,
 	STMT_UPDATE_FIRST_DEPTH,
@@ -171,21 +170,21 @@ const char *texts[STMT_COUNT] = {
 		VALUES
 		    (?1, ?2, ?3);
 	),
-	[STMT_GET_FILE_ID] = SQL(
-		SELECT file_id
-		  FROM files
+	[STMT_GET_PATH_ID] = SQL(
+		SELECT path_id
+		  FROM paths
 		 WHERE name = ?1
 		 LIMIT 1;
 	),
-	[STMT_INSERT_FILE] = SQL(
-		INSERT INTO files(name)
+	[STMT_INSERT_PATH] = SQL(
+		INSERT INTO paths(name)
 		VALUES
 		    (?1);
 	),
 	[STMT_INSERT_CHANGE] = SQL(
 		INSERT INTO changes
 		(      commit_id
-		     , file_id
+		     , path_id
 		)
 		VALUES
 		    (?1, ?2);
@@ -220,28 +219,28 @@ const char *texts[STMT_COUNT] = {
 		 WHERE repository_id = ?1
 		   AND is_dirty IS NOT NULL;
 	),
-	[STMT_BACKFILL_LIST_FILES] = SQL(
-		SELECT DISTINCT cg.file_id
+	[STMT_BACKFILL_LIST_PATHS] = SQL(
+		SELECT DISTINCT cg.path_id
 		  FROM changes AS cg
 		  JOIN commits AS c
 		    ON c.commit_id = cg.commit_id
 		 WHERE c.repository_id = ?1
 		   AND cg.last_commit_id IS NULL;
 	),
-	[STMT_BACKFILL_FILE_COMMITS] = SQL(
+	[STMT_BACKFILL_PATH_COMMITS] = SQL(
 		SELECT cg.commit_id
 		     , cg.last_commit_id IS NULL AS need_update
 		  FROM changes AS cg
 		  JOIN commits AS c
 		    ON c.commit_id = cg.commit_id
-		 WHERE cg.file_id = ?1
+		 WHERE cg.path_id = ?1
 		   AND c.repository_id = ?2;
 	),
 	[STMT_BACKFILL_UPDATE_CHANGE] = SQL(
 		UPDATE changes
 		   SET last_commit_id = ?1
 		 WHERE commit_id = ?2
-		   AND file_id = ?3;
+		   AND path_id = ?3;
 	),
 	[STMT_BACKFILL_LOAD_COMMITS] = SQL(
 		SELECT c.commit_id
@@ -264,11 +263,14 @@ const char *texts[STMT_COUNT] = {
 		 WHERE repository_id = ?1;
 	),
 	[STMT_STATUS_FILE_COUNT] = SQL(
-		SELECT COUNT(DISTINCT cg.file_id)
+		SELECT COUNT(DISTINCT cg.path_id)
 		  FROM changes AS cg
 		  JOIN commits AS c
 		    ON c.commit_id = cg.commit_id
-		 WHERE c.repository_id = ?1;
+		  JOIN paths AS p
+		    ON p.path_id = cg.path_id
+		 WHERE c.repository_id = ?1
+		   AND p.name NOT LIKE '%/';
 	),
 	[STMT_STATUS_REF_COUNTS] = SQL(
 		SELECT ref_type
@@ -283,7 +285,7 @@ const char *texts[STMT_COUNT] = {
 static sqlite3 *conn = NULL;
 static sqlite3_stmt *stmts[STMT_COUNT];
 
-static struct strmap file_map;
+static struct strmap path_map;
 
 static sqlite3 *
 db_open(const char *path)
@@ -620,37 +622,52 @@ insert_commit(int64_t repository_id, const char *hash, const char *parent_hash)
 }
 
 static int64_t
-get_or_insert_file_id(const char *path)
+get_or_insert_path_id(const char *path)
 {
-	// Fast in-memory lookup for file_id.
-	int64_t file_id = (intptr_t)strmap_get(&file_map, path);
-	if (file_id)
-		return file_id;
+	// Fast in-memory lookup for path_id.
+	int64_t path_id = (intptr_t)strmap_get(&path_map, path);
+	if (path_id)
+		return path_id;
 
 	// Cache miss: try the database first.
-	sqlite3_stmt *get_file = stmts[STMT_GET_FILE_ID];
-	sqlite3_reset(get_file);
-	sqlite3_bind_text(get_file, 1, path, -1, SQLITE_STATIC);
-	int rc = sqlite3_step(get_file);
+	sqlite3_stmt *get_path = stmts[STMT_GET_PATH_ID];
+	sqlite3_reset(get_path);
+	sqlite3_bind_text(get_path, 1, path, -1, SQLITE_STATIC);
+	int rc = sqlite3_step(get_path);
 	if (rc == SQLITE_ROW) {
-		file_id = sqlite3_column_int64(get_file, 0);
+		path_id = sqlite3_column_int64(get_path, 0);
 		goto cache;
 	}
 
-	// Not in DB either: insert a new file.
-	sqlite3_stmt *insert_file = stmts[STMT_INSERT_FILE];
-	sqlite3_reset(insert_file);
-	sqlite3_bind_text(insert_file, 1, path, -1, SQLITE_STATIC);
-	rc = sqlite3_step(insert_file);
+	// Not in DB either: insert a new path.
+	sqlite3_stmt *insert_path = stmts[STMT_INSERT_PATH];
+	sqlite3_reset(insert_path);
+	sqlite3_bind_text(insert_path, 1, path, -1, SQLITE_STATIC);
+	rc = sqlite3_step(insert_path);
 	if (rc != SQLITE_DONE) {
-		err("failed to insert file %s: %s", path, sqlite3_errmsg(conn));
+		err("failed to insert path %s: %s", path, sqlite3_errmsg(conn));
 		return 0;
 	}
-	file_id = sqlite3_last_insert_rowid(conn);
+	path_id = sqlite3_last_insert_rowid(conn);
 
 cache:
-	strmap_put(&file_map, path, (void *)(intptr_t)file_id);
-	return file_id;
+	strmap_put(&path_map, path, (void *)(intptr_t)path_id);
+	return path_id;
+}
+
+static void
+insert_change_row(int64_t commit_id, int64_t path_id, const char *path)
+{
+	sqlite3_stmt *stmt = stmts[STMT_INSERT_CHANGE];
+
+	sqlite3_reset(stmt);
+	sqlite3_bind_int64(stmt, 1, commit_id);
+	sqlite3_bind_int64(stmt, 2, path_id);
+
+	int rc = sqlite3_step(stmt);
+	if (rc != SQLITE_DONE)
+		err("failed to insert change for path %s: %s", path,
+		    sqlite3_errmsg(conn));
 }
 
 static void
@@ -675,7 +692,9 @@ insert_changes_for_commit(int64_t repository_id, struct commit *commit)
 
 	diffcore_std(&opt);
 
-	sqlite3_stmt *insert_change = stmts[STMT_INSERT_CHANGE];
+	struct strset dir_set;
+	strset_init(&dir_set);
+	struct strbuf dir = STRBUF_INIT;
 
 	int64_t commit_id =
 	    get_commit_id(repository_id, oid_to_hex(&commit->object.oid));
@@ -686,20 +705,40 @@ insert_changes_for_commit(int64_t repository_id, struct commit *commit)
 		struct diff_filepair *p = diff_queued_diff.queue[i];
 		const char *path = p->two->path ? p->two->path : p->one->path;
 
-		int64_t file_id = get_or_insert_file_id(path);
-		if (!file_id)
-			continue;
+		int64_t path_id = get_or_insert_path_id(path);
+		if (!path_id)
+			goto cleanup;
 
-		sqlite3_reset(insert_change);
-		sqlite3_bind_int64(insert_change, 1, commit_id);
-		sqlite3_bind_int64(insert_change, 2, file_id);
-		int rc = sqlite3_step(insert_change);
-		if (rc != SQLITE_DONE)
-			err("failed to insert change: %s",
-			    sqlite3_errmsg(conn));
+		insert_change_row(commit_id, path_id, path);
+
+		const char *slash = strchr(path, '/');
+		while (slash) {
+			const char *cur = slash;
+			slash = strchr(slash + 1, '/');
+
+			// do not create a path record for root
+			if (cur == path)
+				continue;
+
+			strbuf_reset(&dir);
+			strbuf_add(&dir, path, cur - path + 1);
+
+			// deduplicated within this commit
+			if (strset_contains(&dir_set, dir.buf))
+				continue;
+
+			strset_add(&dir_set, dir.buf);
+			int64_t dir_id = get_or_insert_path_id(dir.buf);
+			if (!dir_id)
+				goto cleanup;
+
+			insert_change_row(commit_id, dir_id, dir.buf);
+		}
 	}
 
 cleanup:
+	strbuf_release(&dir);
+	strset_clear(&dir_set);
 	diff_flush(&opt);
 }
 
@@ -1014,14 +1053,14 @@ struct backfill_buf {
 };
 
 static void
-update_last_commit_id(int64_t file_id, int64_t commit_id,
+update_last_commit_id(int64_t path_id, int64_t commit_id,
 		      int64_t last_commit_id)
 {
 	sqlite3_stmt *stmt = stmts[STMT_BACKFILL_UPDATE_CHANGE];
 	sqlite3_reset(stmt);
 	sqlite3_bind_int64(stmt, 1, last_commit_id);
 	sqlite3_bind_int64(stmt, 2, commit_id);
-	sqlite3_bind_int64(stmt, 3, file_id);
+	sqlite3_bind_int64(stmt, 3, path_id);
 
 	int rc = sqlite3_step(stmt);
 	if (rc != SQLITE_DONE)
@@ -1030,18 +1069,18 @@ update_last_commit_id(int64_t file_id, int64_t commit_id,
 }
 
 static void
-backfill_one_file(int64_t file_id, int64_t repository_id,
+backfill_one_path(int64_t path_id, int64_t repository_id,
 		  const struct backfill_index *idx, struct backfill_buf *buf)
 {
-	sqlite3_stmt *get_commits = stmts[STMT_BACKFILL_FILE_COMMITS];
+	sqlite3_stmt *get_commits = stmts[STMT_BACKFILL_PATH_COMMITS];
 
 	memset(buf->bitmap, 0, buf->bitmap_size);
 	size_t pending_count = 0;
 
-	// Build bitmap of all commits that touched this file in this
+	// Build bitmap of all commits that touched this path in this
 	// repository, and collect pending commit_ids that need updating.
 	sqlite3_reset(get_commits);
-	sqlite3_bind_int64(get_commits, 1, file_id);
+	sqlite3_bind_int64(get_commits, 1, path_id);
 	sqlite3_bind_int64(get_commits, 2, repository_id);
 	while (sqlite3_step(get_commits) == SQLITE_ROW) {
 		int64_t commit_id = sqlite3_column_int64(get_commits, 0);
@@ -1078,7 +1117,7 @@ backfill_one_file(int64_t file_id, int64_t repository_id,
 			ancestor = idx->parent_local[ancestor];
 		}
 
-		update_last_commit_id(file_id, idx->commit_ids[curr],
+		update_last_commit_id(path_id, idx->commit_ids[curr],
 				      idx->commit_ids[last]);
 	}
 }
@@ -1094,10 +1133,10 @@ backfill_repository(int64_t repository_id)
 
 	backfill_first_depths(idx);
 
-	// List files with at least one unfilled change in this repository.
-	sqlite3_stmt *list_files = stmts[STMT_BACKFILL_LIST_FILES];
-	sqlite3_reset(list_files);
-	sqlite3_bind_int64(list_files, 1, repository_id);
+	// List paths with at least one unfilled change in this repository.
+	sqlite3_stmt *list_paths = stmts[STMT_BACKFILL_LIST_PATHS];
+	sqlite3_reset(list_paths);
+	sqlite3_bind_int64(list_paths, 1, repository_id);
 
 	size_t bitmap_size = (idx->num_commits + 7) / 8;
 	struct backfill_buf buf = {
@@ -1108,9 +1147,9 @@ backfill_repository(int64_t repository_id)
 	};
 	CALLOC_ARRAY(buf.bitmap, bitmap_size);
 
-	while (sqlite3_step(list_files) == SQLITE_ROW) {
-		int64_t file_id = sqlite3_column_int64(list_files, 0);
-		backfill_one_file(file_id, repository_id, idx, &buf);
+	while (sqlite3_step(list_paths) == SQLITE_ROW) {
+		int64_t path_id = sqlite3_column_int64(list_paths, 0);
+		backfill_one_path(path_id, repository_id, idx, &buf);
 	}
 
 	free(buf.pending);
@@ -1150,8 +1189,8 @@ run_sync(const char *name)
 	// caches.
 	the_repository->settings.delta_base_cache_limit = 0;
 
-	// Initialize on-demand cache for file lookups.
-	strmap_init(&file_map);
+	// Initialize on-demand cache for path lookups.
+	strmap_init(&path_map);
 
 	dbg("syncing repository %" PRId64 ": %s", repository_id, gitdir);
 
@@ -1183,7 +1222,7 @@ run_sync(const char *name)
 
 	db_end_transaction();
 
-	strmap_clear(&file_map, 0);
+	strmap_clear(&path_map, 0);
 	free(gitdir);
 	repo_clear(the_repository);
 

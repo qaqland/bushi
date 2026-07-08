@@ -70,22 +70,30 @@ CREATE INDEX IF NOT EXISTS idx_commit_hash_only
        commit_hash
        );
 
-CREATE TABLE IF NOT EXISTS files
-(      file_id          INTEGER PRIMARY KEY AUTOINCREMENT
+CREATE TABLE IF NOT EXISTS paths
+(      path_id          INTEGER PRIMARY KEY AUTOINCREMENT
      , name             TEXT    UNIQUE NOT NULL -- just like the hashmap
 ) STRICT;
 
+-- File vs directory is encoded in paths.name:
+--   file paths never end with '/'
+--   directory paths always end with '/'
+--   root is not stored as a path record
+-- last_commit_id semantics:
+--   IS NULL         : not backfilled yet (incompleted)
+--   = commit_id     : first time this path appears (chain end)
+--   otherwise       : previous commit that touched this path
 CREATE TABLE IF NOT EXISTS changes
 (      commit_id        INTEGER NOT NULL
-     , file_id          INTEGER NOT NULL
-     , last_commit_id   INTEGER          -- previous commit that modified this file
-     , PRIMARY KEY (commit_id, file_id)
+     , path_id          INTEGER NOT NULL
+     , last_commit_id   INTEGER
+     , PRIMARY KEY (commit_id, path_id)
      , FOREIGN KEY (last_commit_id) REFERENCES commits(commit_id)
 ) WITHOUT ROWID, STRICT;
 
-CREATE INDEX IF NOT EXISTS idx_changes_file_last
+CREATE INDEX IF NOT EXISTS idx_changes_path_last
     ON changes (
-       file_id
+       path_id
      , last_commit_id
        );
 
