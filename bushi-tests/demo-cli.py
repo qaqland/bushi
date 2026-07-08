@@ -9,7 +9,7 @@ import sys
 
 signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 
-USAGE = "usage: demo-cli.py [-t DATABASE] REPO_NAME -- [FIlE_PATH]"
+USAGE = "usage: demo-cli.py [-t DATABASE] [-n LIMIT] REPO_NAME -- [FIlE_PATH]"
 
 
 def print_usage(file=sys.stdout):
@@ -54,6 +54,13 @@ def parse_args(argv):
         "-t",
         dest="database",
         help="SQLite database path",
+    )
+    parser.add_argument(
+        "-n",
+        dest="limit",
+        type=int,
+        default=None,
+        help="Limit the number of commits shown",
     )
     parser.add_argument(
         "repo",
@@ -158,10 +165,14 @@ def is_first_parent_ancestor(conn, candidate_id, input_id):
     return current == candidate_id
 
 
-def query_no_path(conn, start_commit_id):
-    """Return all commits on the first-parent chain, newest first."""
-    cursor = conn.execute(
-        """
+U32_MAX = 2**32 - 1
+
+
+def query_no_path(conn, start_commit_id, limit):
+    """Return commits on the first-parent chain, newest first."""
+    # ORDER BY/LIMIT are inside the recursive CTE so SQLite stops the recursion
+    # once enough rows are produced, while still guaranteeing seq order.
+    sql = """
         WITH RECURSIVE history(commit_id, seq) AS (
             SELECT ?, 0
 
@@ -173,20 +184,20 @@ def query_no_path(conn, start_commit_id):
               JOIN ancestors AS a
                 ON a.commit_id = h.commit_id
                AND a.exponent = 0
+             ORDER BY 2
+             LIMIT ?
         )
         SELECT c.commit_hash
           FROM history AS h
           JOIN commits AS c
             ON c.commit_id = h.commit_id
-         ORDER BY h.seq ASC
-        """,
-        (start_commit_id,),
-    )
+        """
+    cursor = conn.execute(sql, [start_commit_id, limit])
     return [row[0] for row in cursor]
 
 
-def find_file_start_commit(conn, repository_id, file_id, input_commit_id):
-    """Find the nearest commit on the first-parent chain that modified file_id."""
+def find_path_start_commit(conn, repository_id, path_id, input_commit_id):
+    """Find the nearest commit on the first-parent chain that modified path_id."""
     input_depth = get_commit_depth(conn, input_commit_id)
 
     cursor = conn.execute(
@@ -195,12 +206,12 @@ def find_file_start_commit(conn, repository_id, file_id, input_commit_id):
           FROM changes AS cg
           JOIN commits AS c
             ON c.commit_id = cg.commit_id
-         WHERE cg.file_id = ?
+         WHERE cg.path_id = ?
            AND c.repository_id = ?
            AND c.first_depth <= ?
          ORDER BY c.first_depth DESC
         """,
-        (file_id, repository_id, input_depth),
+        (path_id, repository_id, input_depth),
     )
 
     for row in cursor:
@@ -211,10 +222,28 @@ def find_file_start_commit(conn, repository_id, file_id, input_commit_id):
     return None
 
 
-def query_file_history(conn, file_id, start_commit_id):
-    """Return all commits that touched file_id, newest first."""
-    cursor = conn.execute(
-        """
+def query_path_history(conn, repository_id, query_path, input_commit_id, limit):
+    """Return commits that touched query_path, newest first.
+
+    query_path is used verbatim: a trailing slash queries a directory,
+    no trailing slash queries a file.
+    """
+    row = conn.execute(
+        "SELECT path_id FROM paths WHERE name = ? LIMIT 1",
+        (query_path,),
+    ).fetchone()
+    if row is None:
+        return []
+    path_id = row[0]
+
+    start_commit_id = find_path_start_commit(
+        conn, repository_id, path_id, input_commit_id
+    )
+    if start_commit_id is None:
+        return []
+
+    # See query_no_path for why LIMIT is inside the recursive CTE.
+    sql = """
         WITH RECURSIVE history(commit_id, seq) AS (
             SELECT ? AS commit_id,
                    0  AS seq
@@ -226,29 +255,42 @@ def query_file_history(conn, file_id, start_commit_id):
               FROM history AS h
               JOIN changes AS cg
                 ON cg.commit_id = h.commit_id
-               AND cg.file_id = ?
+               AND cg.path_id = ?
              WHERE cg.last_commit_id != h.commit_id
+             ORDER BY 2
+             LIMIT ?
         )
         SELECT c.commit_hash
           FROM history AS h
           JOIN commits AS c
             ON c.commit_id = h.commit_id
-         ORDER BY h.seq ASC
-        """,
-        (start_commit_id, file_id),
-    )
+        """
+    cursor = conn.execute(sql, [start_commit_id, path_id, limit])
     return [row[0] for row in cursor]
 
 
 def main(argv=None):
     args = parse_args(argv)
 
-    path = args.database or os.environ.get("BUSHI_DATABASE")
-    if not path:
+    if args.limit is not None and args.limit < 0:
+        fail("error: argument -n: expected non-negative integer")
+
+    if args.limit is None:
+        args.limit = U32_MAX
+
+    if args.paths:
+        if len(args.paths) > 1:
+            fail("only one path is supported")
+        query_path = args.paths[0]
+    else:
+        query_path = None
+
+    database = args.database or os.environ.get("BUSHI_DATABASE")
+    if not database:
         fail("database path required")
 
     try:
-        conn = open_database(path)
+        conn = open_database(database)
     except sqlite3.Error as exc:
         fail(error_message(exc))
 
@@ -256,28 +298,13 @@ def main(argv=None):
         repository_id = get_repository_id(conn, args.repo)
         start_commit_id = get_start_commit_id(conn, repository_id)
 
-        if args.paths:
-            if len(args.paths) > 1:
-                fail("only one path is supported")
-            file_path = args.paths[0]
-
-            row = conn.execute(
-                "SELECT file_id FROM files WHERE name = ? LIMIT 1",
-                (file_path,),
-            ).fetchone()
-            if row is None:
-                return 0
-            file_id = row[0]
-
-            file_start_id = find_file_start_commit(
-                conn, repository_id, file_id, start_commit_id
-            )
-            if file_start_id is None:
-                return 0
-
-            results = query_file_history(conn, file_id, file_start_id)
+        if query_path is None:
+            results = query_no_path(conn, start_commit_id, args.limit)
         else:
-            results = query_no_path(conn, start_commit_id)
+            results = query_path_history(
+                conn, repository_id, query_path, start_commit_id, args.limit
+            )
+
     except (sqlite3.Error, ValueError) as exc:
         fail(error_message(exc))
     finally:
