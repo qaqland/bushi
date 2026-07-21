@@ -817,13 +817,13 @@ insert_ref(const struct reference *ref, void *cb_data)
 		return 0; // skip refs/notes, refs/remotes, etc.
 	}
 
-	// ref_time: use commit timestamp for MVP
+	// ref_time is the commit timestamp in Unix seconds.
 	sqlite3_stmt *stmt = stmts[STMT_UPSERT_REF];
 	sqlite3_reset(stmt);
 	sqlite3_bind_text(stmt, 1, ref->name, -1, SQLITE_STATIC);
 	sqlite3_bind_text(stmt, 2, show_name, -1, SQLITE_STATIC);
 	sqlite3_bind_int64(stmt, 3, commit_id);
-	sqlite3_bind_int64(stmt, 4, 0); // ref_time placeholder
+	sqlite3_bind_int64(stmt, 4, commit->date);
 	sqlite3_bind_int64(stmt, 5, ref_type);
 	sqlite3_bind_int64(stmt, 6, repository_id);
 
