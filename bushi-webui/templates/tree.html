@@ -1,0 +1,13 @@
+<h1 class="sr-only">Files</h1>
+<div class="max-w-full overflow-x-auto"><table class="list tree-list">
+  <thead><tr><th scope="col">Mode</th><th scope="col">Name</th><th scope="col">Size</th></tr></thead>
+  <tbody>
+  {% if let Some(parent_href) = parent_href %}
+    <tr><td>040000</td><td><a href="{{ parent_href }}">../</a></td><td>--</td></tr>
+  {% endif %}
+  {% for row in rows %}
+    <tr><td>{{ row.mode }}</td><td>{% if row.href.is_empty() %}<span>{{ row.name }}</span>{% else %}<a href="{{ row.href }}">{{ row.name }}</a>{% endif %}{% if !row.kind_label.is_empty() %} <span class="ml-2 font-sans text-xs text-slate-600">{{ row.kind_label }}</span>{% endif %}</td><td>{{ row.size }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% if rows.is_empty() %}<p class="text-slate-600">This directory is empty.</p>{% endif %}

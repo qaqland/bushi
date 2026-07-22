@@ -1,0 +1,25 @@
+<h1>{{ name }}</h1>
+{% if !description.is_empty() %}<p>{{ description }}</p>{% endif %}
+<p class="text-slate-600">Default version: <a class="font-mono" href="{{ browse_href }}">{{ default_rev }}</a></p>
+<section aria-labelledby="overview-readme">
+<h2 id="overview-readme">README</h2>
+{% if let Some(readme_html) = readme_html %}
+<div class="readme">{{ readme_html|safe }}</div>
+{% else %}
+<p class="text-slate-600">No README file was found at the default version. <a href="{{ browse_href }}">Browse files</a></p>
+{% endif %}
+</section>
+{% if !recent.is_empty() %}
+<section aria-labelledby="recent-title">
+<h2 id="recent-title">Recent commits</h2>
+<div class="max-w-full overflow-x-auto"><table class="list history-list">
+  <thead><tr><th scope="col">Commit</th><th scope="col">Subject</th><th scope="col">Author</th><th scope="col">Time (UTC)</th></tr></thead>
+  <tbody>
+  {% for commit in recent %}
+    <tr><td class="font-mono text-xs whitespace-nowrap"><a href="{{ commit.href }}">{{ commit.short }}</a></td><td><a href="{{ commit.href }}">{{ commit.subject }}</a></td><td>{{ commit.author }}</td><td class="font-mono text-xs whitespace-nowrap text-slate-600">{{ commit.time }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+<p><a href="{{ more_href }}">View all commits</a></p>
+</section>
+{% endif %}
