@@ -1,0 +1,18 @@
+<h2>Branches</h2>
+<table class="list">
+  <thead><tr><th>Name</th><th>Commit</th><th>Actions</th></tr></thead>
+  <tbody>
+  {% for row in branches %}
+    <tr><td><a href="{{ row.tree_href }}">{{ row.name }}</a></td><td><a href="{{ row.commit_href }}">{{ row.short }}</a></td><td>[<a href="{{ row.tree_href }}">tree</a>] [<a href="{{ row.history_href }}">history</a>]</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<h2>Tags</h2>
+<table class="list">
+  <thead><tr><th>Name</th><th>Commit</th><th>Actions</th></tr></thead>
+  <tbody>
+  {% for row in tags %}
+    <tr><td><a href="{{ row.tree_href }}">{{ row.name }}</a></td><td><a href="{{ row.commit_href }}">{{ row.short }}</a></td><td>[<a href="{{ row.tree_href }}">tree</a>] [<a href="{{ row.history_href }}">history</a>]</td></tr>
+  {% endfor %}
+  </tbody>
+</table>

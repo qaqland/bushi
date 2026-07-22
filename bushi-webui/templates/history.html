@@ -1,0 +1,11 @@
+<table class="list history-list">
+  <thead><tr><th>Commit</th><th>Subject</th><th>Author</th><th>Time</th></tr></thead>
+  <tbody>
+  {% for entry in entries %}
+    <tr><td><a href="{{ entry.href }}">{{ entry.short }}</a></td><td><a href="{{ entry.href }}">{{ entry.subject }}</a></td><td>{{ entry.author }}</td><td>{{ entry.time }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% if let Some(older_href) = older_href %}
+<p class="more"><a href="{{ older_href }}">older</a></p>
+{% endif %}

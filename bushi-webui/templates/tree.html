@@ -1,0 +1,11 @@
+<table class="list">
+  <thead><tr><th>Name</th><th>Mode</th><th>Size</th></tr></thead>
+  <tbody>
+  {% if let Some(parent_href) = parent_href %}
+    <tr><td><a href="{{ parent_href }}">../</a></td><td>040000</td><td>--</td></tr>
+  {% endif %}
+  {% for row in rows %}
+    <tr><td><a href="{{ row.href }}">{{ row.name }}</a></td><td>{{ row.mode }}</td><td>{{ row.size }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>

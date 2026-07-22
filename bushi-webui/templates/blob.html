@@ -1,0 +1,13 @@
+{% if let Some(latest) = latest %}
+<div class="commit-card"><a href="{{ latest.href }}">{{ latest.short }}</a>&nbsp;&nbsp;{{ latest.subject }}&nbsp;&nbsp;{{ latest.author }}&nbsp;&nbsp;{{ latest.time }}</div>
+{% endif %}
+<p>{{ loc }} lines&nbsp;&nbsp;&nbsp;&nbsp;{{ size }}</p>
+{% if let Some(lines) = lines %}
+<div class="codebox"><table class="code"><tbody>
+{% for line in lines %}
+<tr><td class="ln">{{ loop.index }}</td><td class="src">{{ line }}</td></tr>
+{% endfor %}
+</tbody></table></div>
+{% else %}
+<p class="muted">Binary file cannot be displayed.</p>
+{% endif %}

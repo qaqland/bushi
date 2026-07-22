@@ -1,0 +1,129 @@
+* { box-sizing: border-box; }
+
+body {
+  margin: 0 auto;
+  max-width: 1200px;
+  background: #fff;
+  color: #333;
+  font: 10pt sans-serif;
+}
+
+a { color: #00c; text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+header { padding: 0; }
+
+.brandline {
+  padding: 0.5em 2em;
+  font-size: 150%;
+}
+.brand { color: #000; font-weight: bold; }
+
+.tabs {
+  display: flex;
+  border-bottom: 3px solid #ccc;
+  padding: 0 2em;
+}
+.tabs a {
+  padding: 2px 0.75em;
+  color: #777;
+  font-size: 110%;
+}
+.tabs a.active { color: #000; background: #ccc; }
+.tabs .rev {
+  margin-left: auto;
+  align-self: center;
+  color: #777;
+  font-family: monospace;
+  white-space: pre;
+}
+
+.objectbar, .pathbar {
+  display: flex;
+  gap: 2em;
+  background: #eee;
+  padding: 5px 2em 2px;
+  font-family: monospace;
+}
+.objectbar { border-bottom: 1px solid #ddd; }
+.pathbar { gap: 0; }
+.pathbar .crumbs { white-space: pre; }
+.pathbar .views { margin-left: auto; }
+.pathbar .history { margin-left: 2em; }
+
+main { padding: 2em; }
+
+footer {
+  color: #777;
+  font-size: 90%;
+  text-align: center;
+  padding: 1em;
+  border-top: 1px solid #ccc;
+}
+
+h2 { font-size: 110%; }
+
+.mono, code, pre, .commit-card { font-family: monospace; }
+.muted { color: #777; }
+
+table.list {
+  width: 100%;
+  border-collapse: collapse;
+}
+table.list tr:nth-child(even) { background: #f7f7f7; }
+table.list tr:hover { background: #eee; }
+table.list th {
+  text-align: left;
+  padding: 0.1em 0.5em;
+  vertical-align: baseline;
+}
+table.list td { padding: 0.1em 0.5em; }
+.history-list a { color: #555; }
+
+.readme {
+  border: 1px solid #ccc;
+  padding: 1em;
+  overflow-x: auto;
+}
+.readme pre { background: #f7f7f7; padding: 1em; overflow-x: auto; }
+
+.codebox { overflow-x: auto; }
+table.code {
+  width: 100%;
+  border-collapse: collapse;
+  font: 10pt monospace;
+  white-space: pre;
+}
+table.code td { padding: 0 0.5em; }
+table.code td.ln {
+  width: 1%;
+  text-align: right;
+  color: #888;
+  background: #eee;
+  border-right: 1px solid #ccc;
+  user-select: none;
+}
+
+.commit-card {
+  border: 1px solid #ccc;
+  background: #f7f7f7;
+  padding: 0.5em;
+  white-space: pre-wrap;
+}
+
+.diffbox {
+  background: #f7f7f7;
+  border: 1px solid #ccc;
+  padding: 1em;
+  overflow-x: auto;
+  font: 10pt monospace;
+}
+.diff-add { color: #0a0; }
+.diff-del { color: #a00; }
+
+@media (max-width: 720px) {
+  .brandline, .tabs, .objectbar, .pathbar { padding-left: 0.5em; padding-right: 0.5em; }
+  main { padding: 0.5em; }
+  .pathbar { flex-wrap: wrap; gap: 0; }
+  .pathbar .history { margin-left: 0.5em; }
+}
