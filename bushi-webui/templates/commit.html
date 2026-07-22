@@ -1,0 +1,27 @@
+<section>
+  <h2>Commit</h2>
+  <p><span class="mono">{{ short_hash }}</span> {{ subject }}</p>
+  <p>Author: {{ author }} &lt;{{ author_email }}&gt;<br>Authored: {{ time }}<br>Commit: <span class="mono">{{ hash }}</span><br>Parent: <span class="mono">{{ parent }}</span></p>
+</section>
+<section>
+  <h2>Message</h2>
+  <pre class="commit-card">{{ message }}</pre>
+</section>
+<section>
+  <h2>Changes</h2>
+  <p>{{ files_changed }} files changed, {{ insertions }} insertions(+), {{ deletions }} deletions(-)</p>
+  <table class="list">
+    <thead><tr><th>File</th><th>Status</th><th>Add</th><th>Del</th><th>View</th></tr></thead>
+    <tbody>
+    {% for file in files %}
+      <tr><td>{{ file.path }}</td><td>{{ file.status }}</td><td>{{ file.additions }}</td><td>{{ file.deletions }}</td><td>[<a href="{{ file.blob_href }}">blob</a>] [<a href="{{ file.raw_href }}">raw</a>] [<a href="{{ file.history_href }}">history</a>]</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+<section>
+  <h2>Diff</h2>
+  <pre class="diffbox">{% for line in diff %}{% if line.class.is_empty() %}{{ line.text }}
+{% else %}<span class="{{ line.class }}">{{ line.text }}
+</span>{% endif %}{% endfor %}</pre>
+</section>

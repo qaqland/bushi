@@ -1,0 +1,8 @@
+<table class="list">
+  <thead><tr><th>Name</th><th>Description</th><th>Updated</th></tr></thead>
+  <tbody>
+  {% for row in rows %}
+    <tr><td><a href="{{ row.href }}">{{ row.name }}</a></td><td>{{ row.description }}</td><td>{{ row.updated }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>

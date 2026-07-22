@@ -1,0 +1,19 @@
+<div class="brandline"><a class="brand" href="/">bushi</a> : <a href="/{{ header.name }}">{{ header.name }}</a></div>
+<nav class="tabs">
+  <a{% if header.tab == Tab::Summary %} class="active"{% endif %} href="/{{ header.name }}">summary</a>
+  <a{% if header.tab == Tab::Files %} class="active"{% endif %} href="/{{ header.name }}/-/tree/{{ header.default_rev }}">files</a>
+  <a{% if header.tab == Tab::Refs %} class="active"{% endif %} href="/{{ header.name }}/-/refs">refs</a>
+  {% if let Some(rev) = header.rev %}
+  <span class="rev">{{ rev.symbol }} <a href="{{ rev.name_href }}">{{ rev.name }}</a></span>
+  {% endif %}
+</nav>
+{% if let Some(object) = header.object %}
+<div class="objectbar">@ <a href="{{ object.commit_href }}">{{ object.short_hash }}</a>&nbsp;&nbsp;{{ object.subject }}<span class="views">[commit]&nbsp;&nbsp;[<a href="{{ object.patch_href }}">patch</a>]</span></div>
+{% endif %}
+{% if let Some(path) = header.path %}
+<div class="pathbar">
+  <span class="crumbs">{% for crumb in path.crumbs %}{% if !loop.first %}/{% endif %}{% if loop.last %}{{ crumb.label }}{% else %}<a href="{{ crumb.href }}">{{ crumb.label }}</a>{% endif %}{% endfor %}</span>
+  <span class="views">{% for view in path.views %}{% if !loop.first %}&nbsp;&nbsp;{% endif %}[{% if view.active %}{{ view.label }}{% else %}<a href="{{ view.href }}">{{ view.label }}</a>{% endif %}]{% endfor %}</span>
+  <span class="history">[{% if path.history.active %}{{ path.history.label }}{% else %}<a href="{{ path.history.href }}">{{ path.history.label }}</a>{% endif %}]</span>
+</div>
+{% endif %}

@@ -1,0 +1,17 @@
+{% if let Some(readme_html) = readme_html %}
+<div class="readme">{{ readme_html|safe }}</div>
+{% else %}
+<p class="muted">No README file was found at the default revision.</p>
+{% endif %}
+{% if !recent.is_empty() %}
+<h2>recent commits</h2>
+<table class="list">
+  <thead><tr><th>Commit</th><th>Subject</th><th>Author</th><th>Time</th></tr></thead>
+  <tbody>
+  {% for commit in recent %}
+    <tr><td><a href="{{ commit.href }}">{{ commit.short }}</a></td><td><a href="{{ commit.href }}">{{ commit.subject }}</a></td><td>{{ commit.author }}</td><td>{{ commit.time }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="more"><a href="{{ more_href }}">→ more</a></p>
+{% endif %}

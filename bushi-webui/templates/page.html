@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }}</title>
+  <link rel="stylesheet" href="/static/bushi.css">
+  {% if alternate_markdown_href.len() > 0 %}<link rel="alternate" type="text/markdown" href="{{ alternate_markdown_href }}">{% endif %}
+  {% if alternate_text_href.len() > 0 %}<link rel="alternate" type="text/plain" href="{{ alternate_text_href }}">{% endif %}
+</head>
+<body>
+  <header>
+{{ header_html|safe }}
+  </header>
+  <main>
+{{ content_html|safe }}
+  </main>
+  <footer>bushi 0.0.1&nbsp;&nbsp;&nbsp;&nbsp;render: {{ render_ms }}ms</footer>
+</body>
+</html>
