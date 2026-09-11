@@ -1,0 +1,11 @@
+{
+  "name": "bushi-webui-styles",
+  "private": true,
+  "scripts": {
+    "css:build": "tailwindcss -i ./styles/bushi.css -o ./static/bushi.css --minify"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "4.3.3",
+    "tailwindcss": "4.3.3"
+  }
+}

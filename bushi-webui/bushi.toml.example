@@ -1,0 +1,11 @@
+database = "test.db"
+bind = "127.0.0.1:3000"
+
+[[header_links]]
+label = "GitHub"
+href = "https://github.com/qaqland/bushi"
+
+# Add any site-specific links in display order.
+# [[header_links]]
+# label = "Website"
+# href = "https://example.com"

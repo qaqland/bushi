@@ -1,0 +1,23 @@
+<div class="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2">
+  <h1 class="mb-1 font-mono text-lg">{{ name }}</h1>
+  <div class="flex flex-wrap gap-x-6 gap-y-2 text-sm">{% if lines.is_some() %}<a href="{{ raw_href }}">Raw text</a>{% endif %}<a href="{{ download_href }}">Download file</a></div>
+</div>
+{% if let Some(latest) = latest %}
+<div class="commit-card">
+  <a class="commit-hash" href="{{ latest.href }}">{{ latest.short }}</a>
+  <a class="commit-subject" href="{{ latest.href }}">{{ latest.subject }}</a>
+  <span>{{ latest.author }}</span>
+  <span class="commit-time">{{ latest.time }}</span>
+</div>
+{% endif %}
+<p class="text-slate-600">{% if lines.is_some() %}{{ loc }} lines · {% else %}Binary file · {% endif %}{{ size }}</p>
+{% if let Some(lines) = lines %}
+<div class="max-w-full overflow-x-auto" tabindex="0" role="region" aria-label="Source code"><table class="code"><tbody>
+{% for line in lines %}
+<tr id="L{{ loop.index }}"><td class="ln"><a href="{{ permalink }}#L{{ loop.index }}" aria-label="Permanent link to line {{ loop.index }}">{{ loop.index }}</a></td><td>{{ line }}</td></tr>
+{% endfor %}
+</tbody></table></div>
+{% if lines.is_empty() %}<p class="text-slate-600">This file is empty.</p>{% endif %}
+{% else %}
+<p class="text-slate-600">Binary content cannot be displayed as text. <a href="{{ download_href }}">Download file</a></p>
+{% endif %}
