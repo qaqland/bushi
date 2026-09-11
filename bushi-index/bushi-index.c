@@ -373,16 +373,34 @@ db_exec(const char *sql)
 	}
 }
 
-void
-db_begin_transaction(void)
+#define DB_BATCH_SIZE 1024
+
+static size_t db_batch_count = 0;
+
+static void
+db_batch_begin(void)
 {
-	db_exec("BEGIN TRANSACTION");
+	if (db_batch_count == 0)
+		db_exec("BEGIN TRANSACTION");
 }
 
-void
-db_end_transaction(void)
+static void
+db_batch_check(void)
 {
-	db_exec("COMMIT");
+	db_batch_count++;
+	if (db_batch_count >= DB_BATCH_SIZE) {
+		db_exec("COMMIT");
+		db_batch_count = 0;
+	}
+}
+
+static void
+db_batch_flush(void)
+{
+	if (db_batch_count != 0) {
+		db_exec("COMMIT");
+		db_batch_count = 0;
+	}
 }
 
 static void
@@ -609,6 +627,7 @@ commit_exists(int64_t repository_id, const char *hash)
 static void
 insert_commit(int64_t repository_id, const char *hash, const char *parent_hash)
 {
+	db_batch_begin();
 	sqlite3_stmt *stmt = stmts[STMT_INSERT_COMMIT];
 	sqlite3_reset(stmt);
 	sqlite3_bind_text(stmt, 1, hash, -1, SQLITE_STATIC);
@@ -619,6 +638,7 @@ insert_commit(int64_t repository_id, const char *hash, const char *parent_hash)
 	if (rc != SQLITE_DONE)
 		err("failed to insert commit %s: %s", hash,
 		    sqlite3_errmsg(conn));
+	db_batch_check();
 }
 
 static int64_t
@@ -640,6 +660,7 @@ get_or_insert_path_id(const char *path)
 	}
 
 	// Not in DB either: insert a new path.
+	db_batch_begin();
 	sqlite3_stmt *insert_path = stmts[STMT_INSERT_PATH];
 	sqlite3_reset(insert_path);
 	sqlite3_bind_text(insert_path, 1, path, -1, SQLITE_STATIC);
@@ -648,6 +669,7 @@ get_or_insert_path_id(const char *path)
 		err("failed to insert path %s: %s", path, sqlite3_errmsg(conn));
 		return 0;
 	}
+	db_batch_check();
 	path_id = sqlite3_last_insert_rowid(conn);
 
 cache:
@@ -658,6 +680,7 @@ cache:
 static void
 insert_change_row(int64_t commit_id, int64_t path_id, const char *path)
 {
+	db_batch_begin();
 	sqlite3_stmt *stmt = stmts[STMT_INSERT_CHANGE];
 
 	sqlite3_reset(stmt);
@@ -668,6 +691,7 @@ insert_change_row(int64_t commit_id, int64_t path_id, const char *path)
 	if (rc != SQLITE_DONE)
 		err("failed to insert change for path %s: %s", path,
 		    sqlite3_errmsg(conn));
+	db_batch_check();
 }
 
 static void
@@ -770,6 +794,7 @@ walk_commit_history(int64_t repository_id, struct commit *commit)
 		for (struct commit_list *p = c->parents; p; p = p->next)
 			commit_list_insert(p->item, &stack);
 	}
+	db_batch_flush();
 }
 
 static int
@@ -818,6 +843,7 @@ insert_ref(const struct reference *ref, void *cb_data)
 	}
 
 	// ref_time is the commit timestamp in Unix seconds.
+	db_batch_begin();
 	sqlite3_stmt *stmt = stmts[STMT_UPSERT_REF];
 	sqlite3_reset(stmt);
 	sqlite3_bind_text(stmt, 1, ref->name, -1, SQLITE_STATIC);
@@ -831,6 +857,7 @@ insert_ref(const struct reference *ref, void *cb_data)
 	if (rc != SQLITE_DONE)
 		err("failed to insert ref %s: %s", ref->name,
 		    sqlite3_errmsg(conn));
+	db_batch_check();
 
 	return 0;
 }
@@ -966,11 +993,14 @@ backfill_first_depths(struct backfill_index *idx)
 		while (trail.count) {
 			uint32_t v = trail.items[--trail.count];
 			idx->first_depth[v] = depth;
+			db_batch_begin();
 			update_first_depth(idx->commit_ids[v], depth);
+			db_batch_check();
 			depth++;
 		}
 	}
 
+	db_batch_flush();
 	free(trail.items);
 }
 
@@ -1056,6 +1086,7 @@ static void
 update_last_commit_id(int64_t path_id, int64_t commit_id,
 		      int64_t last_commit_id)
 {
+	db_batch_begin();
 	sqlite3_stmt *stmt = stmts[STMT_BACKFILL_UPDATE_CHANGE];
 	sqlite3_reset(stmt);
 	sqlite3_bind_int64(stmt, 1, last_commit_id);
@@ -1066,6 +1097,7 @@ update_last_commit_id(int64_t path_id, int64_t commit_id,
 	if (rc != SQLITE_DONE)
 		err("failed to update last_commit_id: %s",
 		    sqlite3_errmsg(conn));
+	db_batch_check();
 }
 
 static void
@@ -1151,6 +1183,7 @@ backfill_repository(int64_t repository_id)
 		int64_t path_id = sqlite3_column_int64(list_paths, 0);
 		backfill_one_path(path_id, repository_id, idx, &buf);
 	}
+	db_batch_flush();
 
 	free(buf.pending);
 	free(buf.bitmap);
@@ -1194,8 +1227,6 @@ run_sync(const char *name)
 
 	dbg("syncing repository %" PRId64 ": %s", repository_id, gitdir);
 
-	db_begin_transaction();
-
 	// Mark all existing refs for this repository as dirty
 	stmt = stmts[STMT_UPDATE_REFS_DIRTY];
 	sqlite3_reset(stmt);
@@ -1219,16 +1250,13 @@ run_sync(const char *name)
 	rc = sqlite3_step(stmt);
 	if (rc != SQLITE_DONE)
 		err("failed to delete dirty refs: %s", sqlite3_errmsg(conn));
-
-	db_end_transaction();
+	db_batch_flush();
 
 	strmap_clear(&path_map, 0);
 	free(gitdir);
 	repo_clear(the_repository);
 
-	db_begin_transaction();
 	backfill_repository(repository_id);
-	db_end_transaction();
 }
 
 void
