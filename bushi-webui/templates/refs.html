@@ -1,0 +1,28 @@
+<h1>{{ title }}</h1>
+{% if switching %}<p>{{ context }} <a href="{{ cancel_href }}">Cancel</a></p>{% endif %}
+{% if show_branches %}
+{% if show_tags %}<h2>Branches</h2>{% endif %}
+{% if branches.is_empty() %}<p class="text-slate-600">No branches.</p>{% else %}
+<div class="max-w-full overflow-x-auto"><table class="list refs-list">
+  <thead><tr><th scope="col">Name</th><th scope="col">Commit</th><th scope="col">Time (UTC)</th></tr></thead>
+  <tbody>
+  {% for row in branches %}
+    <tr><td><a class="font-mono" href="{{ row.href }}">{{ row.name }}</a>{% if row.default %} <span class="ml-2 border border-slate-300 px-1 text-xs whitespace-nowrap text-slate-600">Default</span>{% endif %}{% if row.current %} <span class="ml-2 border border-slate-300 px-1 text-xs whitespace-nowrap text-slate-600">Current</span>{% endif %}</td><td class="font-mono text-xs whitespace-nowrap"><a href="{{ row.commit_href }}">{{ row.short }}</a></td><td class="font-mono text-xs whitespace-nowrap text-slate-600">{{ row.time }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% endif %}
+{% endif %}
+{% if show_tags %}
+{% if show_branches %}<h2 class="mt-6">Tags</h2>{% endif %}
+{% if tags.is_empty() %}<p class="text-slate-600">No tags.</p>{% else %}
+<div class="max-w-full overflow-x-auto"><table class="list refs-list">
+  <thead><tr><th scope="col">Name</th><th scope="col">Commit</th><th scope="col">Time (UTC)</th></tr></thead>
+  <tbody>
+  {% for row in tags %}
+    <tr><td><a class="font-mono" href="{{ row.href }}">{{ row.name }}</a>{% if row.default %} <span class="ml-2 border border-slate-300 px-1 text-xs whitespace-nowrap text-slate-600">Default</span>{% endif %}{% if row.current %} <span class="ml-2 border border-slate-300 px-1 text-xs whitespace-nowrap text-slate-600">Current</span>{% endif %}</td><td class="font-mono text-xs whitespace-nowrap"><a href="{{ row.commit_href }}">{{ row.short }}</a></td><td class="font-mono text-xs whitespace-nowrap text-slate-600">{{ row.time }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% endif %}
+{% endif %}

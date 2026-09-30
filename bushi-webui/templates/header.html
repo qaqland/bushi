@@ -1,0 +1,30 @@
+<div class="flex flex-wrap items-baseline gap-x-6 gap-y-2 border-b border-slate-300 px-4 py-4 md:px-8">
+  <span class="flex min-w-0 flex-wrap gap-2 text-lg wrap-anywhere"><a class="font-bold tracking-wide text-slate-900" href="/">Bushi</a>{% if let Some(header) = header %}<span class="text-slate-600">/</span><a href="{{ header.home_href }}">{{ header.name }}</a>{% endif %}</span>
+  {% if !links.is_empty() %}
+  <nav class="ml-auto flex flex-wrap gap-5 text-sm" aria-label="External links">
+    {% for link in links %}<a class="text-slate-600" href="{{ link.href }}">{{ link.label }} <span aria-hidden="true">↗</span><span class="sr-only"> (external)</span></a>{% endfor %}
+  </nav>
+  {% endif %}
+</div>
+{% if let Some(header) = header %}
+<div class="border-b border-slate-300 px-4 md:px-8">
+  <nav class="repo-nav flex min-w-0 flex-wrap gap-x-6 gap-y-2" aria-label="Repository">
+    <a href="{{ header.home_href }}"{% if header.active == "overview" %} aria-current="page"{% endif %}>Overview</a>
+    <a href="{{ header.files_href }}"{% if header.active == "files" %} aria-current="page"{% endif %}>Files</a>
+    <a href="{{ header.branches_href }}"{% if header.active == "branches" %} aria-current="page"{% endif %}>Branches</a>
+    <a href="{{ header.tags_href }}"{% if header.active == "tags" %} aria-current="page"{% endif %}>Tags</a>
+  </nav>
+</div>
+{% if let Some(rev) = header.rev %}
+<div class="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-slate-300 px-4 py-2 md:px-8">
+  <a class="view-link" href="{{ rev.switch_href }}" aria-label="Switch version, current {{ rev.kind }}: {{ rev.name }}" title="Switch version, current {{ rev.kind }}: {{ rev.name }}">{% if rev.kind == "Branch" %}<span aria-hidden="true">⎇</span>{% else %}<span>{{ rev.kind }}</span>{% endif %} <span class="min-w-0 font-mono wrap-anywhere">{{ rev.name }}</span> <span aria-hidden="true">⇄</span></a>
+  {% if let Some(path) = header.path %}
+  <nav class="crumbs min-w-0 text-sm" aria-label="Path"><ol class="flex flex-wrap" role="list">{% for crumb in path.crumbs %}<li class="wrap-anywhere">{% if loop.last %}<span aria-current="location">{{ crumb.label }}</span>{% else %}<a href="{{ crumb.href }}">{{ crumb.label }}</a>{% endif %}</li>{% endfor %}</ol></nav>
+  <nav class="ml-auto flex min-w-0 flex-wrap gap-2 text-sm" aria-label="Path view">
+    {% for view in path.views %}<a class="view-link" href="{{ view.href }}"{% if view.active %} aria-current="page"{% endif %}>{{ view.label }}</a>{% endfor %}
+    <a class="view-link" href="{{ path.history.href }}"{% if path.history.active %} aria-current="page"{% endif %}>{{ path.history.label }}</a>
+  </nav>
+  {% endif %}
+</div>
+{% endif %}
+{% endif %}

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }}</title>
+  <link rel="stylesheet" href="/static/bushi.css">
+  {% if alternate_markdown_href.len() > 0 %}<link rel="alternate" type="text/markdown" href="{{ alternate_markdown_href }}">{% endif %}
+  {% if alternate_text_href.len() > 0 %}<link rel="alternate" type="text/plain" href="{{ alternate_text_href }}">{% endif %}
+</head>
+<body class="mx-auto max-w-5xl bg-white font-sans text-base text-slate-900">
+  <a class="absolute -top-20 left-4 z-10 bg-white p-2 focus:top-2" href="#content">Skip to content</a>
+  <header>
+{{ header_html|safe }}
+  </header>
+  <main id="content" class="min-w-0 px-4 pt-6 pb-8 md:px-8">
+{{ content_html|safe }}
+    {% if let Some(rev) = rev %}<p class="mt-6 mb-0 text-xs text-slate-600">Snapshot <a class="font-mono text-xs tabular-nums whitespace-nowrap" href="{{ rev.hash_href }}">{{ rev.short_hash }}</a></p>{% endif %}
+  </main>
+  <footer class="border-t border-slate-300 px-4 py-4 text-xs text-slate-600 md:px-8">{% if generated.is_empty() %}Bushi {{ version }}{% else %}This page was generated in about {{ generated }}s by Bushi {{ version }}{% endif %}</footer>
+</body>
+</html>

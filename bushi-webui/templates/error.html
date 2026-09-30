@@ -1,0 +1,10 @@
+<section>
+  <h1>{{ status }} {{ reason }}</h1>
+  {% if !location.is_empty() %}<p class="font-mono">{{ location }}</p>{% endif %}
+  <p>{{ message }}</p>
+  <nav class="flex flex-wrap gap-x-6 gap-y-2" aria-label="Recovery">
+    <a href="{{ root_href }}">{% if refs_href.is_empty() %}Repositories{% else %}Browse version root{% endif %}</a>
+    {% if !refs_href.is_empty() %}<a href="{{ refs_href }}">Branches &amp; tags</a>{% endif %}
+    {% if !back_href.is_empty() %}<a href="{{ back_href }}">Return to original version</a>{% endif %}
+  </nav>
+</section>

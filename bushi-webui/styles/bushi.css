@@ -1,0 +1,101 @@
+@import "tailwindcss" source(none);
+@source "../templates";
+
+/* Source for static/bushi.css. Run npm run css:build after editing. */
+@layer base {
+  html { color-scheme: light; }
+  a { @apply text-blue-700 no-underline underline-offset-4; }
+  main a:visited { @apply text-purple-700; }
+  a:hover { @apply underline; }
+  a:focus-visible, [tabindex]:focus-visible {
+    @apply outline-2 outline-offset-4 outline-blue-700;
+  }
+  h1 { @apply mb-3 text-xl font-semibold wrap-anywhere; }
+  h2 { @apply mb-3 text-lg font-semibold; }
+  p { @apply my-3 wrap-anywhere; }
+  section + section { @apply mt-8; }
+}
+
+@layer components {
+  /* Shared navigation states, not tied to class order in templates. */
+  .repo-nav a { @apply inline-block border-b-2 border-transparent py-2 no-underline; }
+  /* No font-weight change: bolding the current item reflows the whole nav. */
+  .repo-nav a[aria-current] { @apply border-blue-700 text-slate-900; }
+  .view-link {
+    @apply inline-flex min-h-9 max-w-full items-center justify-center gap-2 rounded border border-slate-300 bg-white px-3 py-1 text-sm text-slate-900 no-underline;
+  }
+  .view-link[aria-current] { @apply border-blue-700 bg-blue-50 font-semibold text-blue-700; }
+  @media (hover: hover) {
+    .repo-nav a:hover { @apply border-blue-700 text-blue-700; }
+    .view-link:hover { @apply bg-slate-100; }
+    .view-link[aria-current]:hover { @apply bg-blue-100; }
+  }
+  .view-link:active { @apply bg-slate-200; }
+  .view-link[aria-current]:active { @apply bg-blue-200; }
+  .crumbs li + li::before { content: "/"; @apply mx-2 text-slate-600; }
+
+  /* Shared table layout keeps cell templates short. */
+  .list { @apply w-full border-collapse text-sm; }
+  .list th { @apply border-b border-slate-300 text-xs font-semibold tracking-wide text-slate-600 uppercase; }
+  .list th, .list td { @apply px-3 py-2 text-left align-baseline; }
+  .list td { @apply tabular-nums; }
+  .list th:first-child, .list td:first-child { @apply pl-0; }
+  .list tbody tr { @apply border-b border-slate-200; }
+  .list tbody tr:hover { @apply bg-slate-50; }
+  .history-list th:first-child, .history-list td:first-child { width: 10ch; }
+  .history-list td:nth-child(2) { @apply min-w-56 wrap-anywhere; }
+  .history-list td:nth-child(3) { @apply whitespace-nowrap; }
+  .tree-list td { @apply font-mono whitespace-nowrap; }
+  .tree-list th:first-child, .tree-list td:first-child { @apply w-20 text-slate-600; }
+  .tree-list th:last-child, .tree-list td:last-child { @apply w-24 text-right text-slate-600; }
+  /* Both refs tables share one grid so branches and tags line up. */
+  .refs-list { @apply table-fixed; }
+  .refs-list td:first-child { @apply wrap-anywhere; }
+  .refs-list th:nth-child(2), .refs-list td:nth-child(2) { @apply w-24; }
+  .refs-list th:nth-child(3), .refs-list td:nth-child(3) { @apply w-44; }
+  .changes-list td:first-child { @apply min-w-56 wrap-anywhere; }
+  .changes-list td:last-child { @apply whitespace-nowrap; }
+
+  /* Sanitized Markdown is generated at runtime, outside Tailwind's scan. */
+  .readme { @apply my-4 mb-8 wrap-anywhere; }
+  .readme h1 { @apply text-2xl; }
+  .readme h2 { @apply border-b border-slate-300 pb-2 text-xl; }
+  .readme h3 { @apply text-lg; }
+  .readme h1, .readme h2, .readme h3, .readme h4, .readme h5, .readme h6 {
+    @apply mt-6 mb-3 font-semibold;
+  }
+  .readme ul { @apply my-3 list-disc pl-6; }
+  .readme ol { @apply my-3 list-decimal pl-6; }
+  .readme li > ul, .readme li > ol { @apply my-1; }
+  .readme pre { @apply overflow-x-auto border border-slate-300 bg-slate-50 p-4 text-sm; }
+  .readme img { @apply max-w-full; }
+  .readme table { @apply block max-w-full overflow-x-auto border-collapse; }
+  .readme th, .readme td { @apply border border-slate-300 px-3 py-2; }
+  .readme blockquote { @apply my-3 border-l-4 border-slate-300 pl-4 text-slate-600; }
+  .readme hr { @apply my-6 border-slate-300; }
+  .readme :target { @apply scroll-mt-4 bg-amber-100; }
+
+  /* Latest commit for the shown file, laid out like a history row. */
+  .commit-card {
+    @apply my-4 flex flex-wrap items-baseline gap-x-4 gap-y-1 rounded border border-slate-300 bg-slate-50 px-4 py-3;
+  }
+  .commit-card .commit-hash { @apply font-mono text-xs whitespace-nowrap; }
+  .commit-card .commit-subject { @apply min-w-0 flex-1 wrap-anywhere; }
+  .commit-card .commit-time { @apply font-mono text-xs whitespace-nowrap text-slate-600; }
+
+  /* Preserve source whitespace and permanent line highlights. */
+  .code { @apply w-full border-collapse font-mono text-sm leading-6 whitespace-pre; tab-size: 8; }
+  .code td { @apply px-3 py-0; }
+  .code .ln { @apply w-px border-r border-slate-300 bg-slate-50 text-right select-none; }
+  .code .ln a { @apply block text-slate-600; }
+  /* Keep keyboard focus visible inside the horizontally clipped code box. */
+  .code .ln a:focus-visible { @apply -outline-offset-2; }
+  .code tr:target { @apply scroll-mt-4 bg-amber-100; }
+  .code tr:target .ln { @apply bg-amber-200; }
+
+  /* These semantic classes are emitted by src/page/commit.rs. */
+  .diff-head { @apply font-semibold text-slate-900; }
+  .diff-add { @apply text-green-700; }
+  .diff-del { @apply text-red-700; }
+  .diff-hunk { @apply text-amber-800; }
+}
