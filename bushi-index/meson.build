@@ -25,7 +25,16 @@ libgit = declare_dependency(
         include_directories('git'),
         include_directories('git/compat/regex'),
     ],
-    compile_args: ['-DNO_REGEX=NeedsStartEnd'],
+    compile_args: [
+        '-DNO_REGEX=NeedsStartEnd',
+        # Keep in sync with the Makefile
+        '-DNO_OPENSSL',
+        '-DNO_CURL',
+        '-DNO_GETTEXT',
+        '-DNO_ICONV',
+        '-DSHA1_DC',
+        '-DSHA256_BLK',
+    ],
     dependencies: meson.get_compiler('c').find_library(
         'git',
         dirs: [root / 'git'],
@@ -33,11 +42,7 @@ libgit = declare_dependency(
     ),
 )
 
-deps = [
-    dependency('sqlite3'),
-    dependency('zlib'),
-    libgit,
-]
+deps = [dependency('sqlite3'), dependency('zlib'), libgit]
 
 exe = executable(
     'bushi-index',

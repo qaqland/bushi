@@ -1,10 +1,10 @@
+#define USE_THE_REPOSITORY_VARIABLE
+#include "git-compat-util.h"
+
 #include <inttypes.h>
 #include <sqlite3.h>
 #include <stdio.h>
 #include <unistd.h>
-
-#define USE_THE_REPOSITORY_VARIABLE
-#include "git-compat-util.h"
 
 #include "commit.h"
 #include "config.h"
