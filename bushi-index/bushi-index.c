@@ -34,6 +34,7 @@ static bool debug = false;
 	do {                                                                   \
 		fprintf(stderr,                                                \
 			"error: " FMT "\n" __VA_OPT__(, ) __VA_ARGS__);        \
+		exit(EXIT_FAILURE);                                            \
 	} while (0)
 
 char *
@@ -287,6 +288,15 @@ static sqlite3_stmt *stmts[STMT_COUNT];
 
 static struct strmap path_map;
 
+static int
+db_step(sqlite3_stmt *stmt)
+{
+	int rc = sqlite3_step(stmt);
+	if (rc != SQLITE_ROW && rc != SQLITE_DONE)
+		err("database query failed: %s", sqlite3_errmsg(conn));
+	return rc;
+}
+
 static sqlite3 *
 db_open(const char *path)
 {
@@ -296,11 +306,8 @@ db_open(const char *path)
 
 	int rc = sqlite3_open_v2(
 	    path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, NULL);
-	if (rc != SQLITE_OK) {
+	if (rc != SQLITE_OK)
 		err("cannot open database '%s': %s", path, sqlite3_errmsg(db));
-		sqlite3_close(db);
-		return NULL;
-	}
 
 	dbg("database opened, initializing schema");
 
@@ -310,24 +317,17 @@ db_open(const char *path)
 
 	char *errmsg = NULL;
 	rc = sqlite3_exec(db, schema, NULL, NULL, &errmsg);
-	if (rc != SQLITE_OK) {
+	if (rc != SQLITE_OK)
 		err("cannot initialize database '%s': %s", path,
 		    errmsg ? errmsg : sqlite3_errmsg(db));
-		sqlite3_free(errmsg);
-		sqlite3_close(db);
-		return NULL;
-	}
 
 	dbg("schema initialized, preparing %d statements", STMT_COUNT);
 
 	for (int i = 0; i < STMT_COUNT; i++) {
 		rc = sqlite3_prepare_v2(db, texts[i], -1, &stmts[i], NULL);
-		if (rc != SQLITE_OK) {
+		if (rc != SQLITE_OK)
 			err("cannot prepare statement %2d: %s", i,
 			    sqlite3_errmsg(db));
-			sqlite3_close(db);
-			return NULL;
-		}
 	}
 
 	dbg("database ready");
@@ -358,19 +358,14 @@ db_exec(const char *sql)
 	char *errmsg = NULL;
 	int rc;
 
-	if (conn == NULL) {
+	if (conn == NULL)
 		err("database connection is not open");
-		exit(1);
-	}
 
 	rc = sqlite3_exec(conn, sql, NULL, NULL, &errmsg);
 
-	if (rc != SQLITE_OK) {
+	if (rc != SQLITE_OK)
 		err("sql execution failed: %s",
 		    errmsg ? errmsg : sqlite3_errmsg(conn));
-		sqlite3_free(errmsg);
-		exit(1);
-	}
 }
 
 #define DB_BATCH_SIZE 1024
@@ -440,16 +435,12 @@ run_list(void)
 	// generally speaking, it would only be used once.
 	sqlite3_reset(stmt);
 
-	int rc;
-	while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+	while (db_step(stmt) == SQLITE_ROW) {
 		const char *name = (const char *)sqlite3_column_text(stmt, 0);
 		const char *path = (const char *)sqlite3_column_text(stmt, 1);
 
 		printf("%-32.32s %s\n", name, path);
 	}
-
-	if (rc != SQLITE_DONE)
-		err("failed to list repositories: %s", sqlite3_errmsg(conn));
 }
 
 static char *
@@ -550,34 +541,26 @@ run_add(const char *path)
 
 	// 1. check if path is a git repository
 	gitdir = gitdir_from_path(path);
-	if (!gitdir) {
+	if (!gitdir)
 		err("not a git repository: %s", path);
-		goto out;
-	}
 
 	// 2. initialize the_repository to read config
-	if (repo_init(the_repository, gitdir, path) < 0) {
+	if (repo_init(the_repository, gitdir, path) < 0)
 		err("cannot initialize repository: %s", path);
-		goto out;
-	}
 
 	head = determine_repository_head();
-	if (!head) {
+	if (!head)
 		err("cannot determine repository head for: %s", path);
-		goto out;
-	}
 
 	name = determine_repository_name(path);
-	if (!name) {
+	if (!name)
 		err("cannot determine repository name for: %s", path);
-		goto out;
-	}
 
 	// 5. check if name already exists
 	sqlite3_stmt *stmt = stmts[STMT_GET_REPOSITORY_BY_NAME];
 	sqlite3_reset(stmt);
 	sqlite3_bind_text(stmt, 1, name, -1, SQLITE_STATIC);
-	int rc = sqlite3_step(stmt);
+	int rc = db_step(stmt);
 	if (rc == SQLITE_ROW) {
 		const char *existing_path =
 		    (const char *)sqlite3_column_text(stmt, 1);
@@ -612,7 +595,7 @@ get_commit_id(int64_t repository_id, const char *hash)
 	sqlite3_bind_text(stmt, 2, hash, -1, SQLITE_STATIC);
 
 	int64_t commit_id = 0;
-	int rc = sqlite3_step(stmt);
+	int rc = db_step(stmt);
 	if (rc == SQLITE_ROW)
 		commit_id = sqlite3_column_int64(stmt, 0);
 	return commit_id;
@@ -653,7 +636,7 @@ get_or_insert_path_id(const char *path)
 	sqlite3_stmt *get_path = stmts[STMT_GET_PATH_ID];
 	sqlite3_reset(get_path);
 	sqlite3_bind_text(get_path, 1, path, -1, SQLITE_STATIC);
-	int rc = sqlite3_step(get_path);
+	int rc = db_step(get_path);
 	if (rc == SQLITE_ROW) {
 		path_id = sqlite3_column_int64(get_path, 0);
 		goto cache;
@@ -665,10 +648,8 @@ get_or_insert_path_id(const char *path)
 	sqlite3_reset(insert_path);
 	sqlite3_bind_text(insert_path, 1, path, -1, SQLITE_STATIC);
 	rc = sqlite3_step(insert_path);
-	if (rc != SQLITE_DONE) {
+	if (rc != SQLITE_DONE)
 		err("failed to insert path %s: %s", path, sqlite3_errmsg(conn));
-		return 0;
-	}
 	db_batch_check();
 	path_id = sqlite3_last_insert_rowid(conn);
 
@@ -780,7 +761,8 @@ walk_commit_history(int64_t repository_id, struct commit *commit)
 		if (commit_exists(repository_id, hash))
 			continue;
 
-		repo_parse_commit(the_repository, c);
+		if (repo_parse_commit(the_repository, c))
+			err("cannot parse commit %s", hash);
 
 		// Record only the first parent in the commits table.
 		const char *parent_hash = NULL;
@@ -824,11 +806,9 @@ insert_ref(const struct reference *ref, void *cb_data)
 
 	int64_t commit_id =
 	    get_commit_id(repository_id, oid_to_hex(&commit->object.oid));
-	if (!commit_id) {
+	if (!commit_id)
 		err("ref %s points to unknown commit %s", ref->name,
 		    oid_to_hex(&commit->object.oid));
-		return 0;
-	}
 
 	const char *show_name = ref->name;
 	int ref_type = 0;
@@ -1020,7 +1000,7 @@ build_backfill_index(int64_t repository_id)
 	size_t parent_ids_alloc = 0;
 	uint32_t num = 0; // local index, starts at 0
 
-	while (sqlite3_step(stmt) == SQLITE_ROW) {
+	while (db_step(stmt) == SQLITE_ROW) {
 		ALLOC_GROW(commit_ids, num + 1, commit_ids_alloc);
 		ALLOC_GROW(parent_ids, num + 1, parent_ids_alloc);
 
@@ -1031,17 +1011,15 @@ build_backfill_index(int64_t repository_id)
 			parent_ids[num] = sqlite3_column_int64(stmt, 1);
 		num++;
 
-		if (num == UINT32_MAX) {
+		if (num == UINT32_MAX)
 			err("backfill index reached UINT32_MAX commits");
-			break;
-		}
 	}
 
 	REALLOC_ARRAY(commit_ids, num);
 	idx->commit_ids = commit_ids;
 	idx->num_commits = num;
 
-	if (num == 0 || num == UINT32_MAX)
+	if (num == 0)
 		goto cleanup;
 
 	idmap_init(&idx->idmap, num);
@@ -1058,11 +1036,9 @@ build_backfill_index(int64_t repository_id)
 			continue;
 
 		uint32_t parent_local = idmap_get(&idx->idmap, parent_id);
-		if (parent_local == UINT32_MAX) {
+		if (parent_local == UINT32_MAX)
 			err("parent %" PRId64 " not found in backfill index",
 			    parent_id);
-			goto cleanup;
-		}
 		idx->parent_local[i] = parent_local;
 	}
 
@@ -1114,16 +1090,14 @@ backfill_one_path(int64_t path_id, int64_t repository_id,
 	sqlite3_reset(get_commits);
 	sqlite3_bind_int64(get_commits, 1, path_id);
 	sqlite3_bind_int64(get_commits, 2, repository_id);
-	while (sqlite3_step(get_commits) == SQLITE_ROW) {
+	while (db_step(get_commits) == SQLITE_ROW) {
 		int64_t commit_id = sqlite3_column_int64(get_commits, 0);
 		int need_update = sqlite3_column_int(get_commits, 1);
 
 		uint32_t commit_local = idmap_get(&idx->idmap, commit_id);
-		if (commit_local == UINT32_MAX) {
+		if (commit_local == UINT32_MAX)
 			err("commit %" PRId64 " not found in backfill index",
 			    commit_id);
-			continue;
-		}
 
 		buf->bitmap[commit_local / 8] |= 1u << (commit_local % 8);
 
@@ -1179,7 +1153,7 @@ backfill_repository(int64_t repository_id)
 	};
 	CALLOC_ARRAY(buf.bitmap, bitmap_size);
 
-	while (sqlite3_step(list_paths) == SQLITE_ROW) {
+	while (db_step(list_paths) == SQLITE_ROW) {
 		int64_t path_id = sqlite3_column_int64(list_paths, 0);
 		backfill_one_path(path_id, repository_id, idx, &buf);
 	}
@@ -1199,20 +1173,15 @@ run_sync(const char *name)
 	sqlite3_reset(stmt);
 	sqlite3_bind_text(stmt, 1, name, -1, SQLITE_STATIC);
 
-	int rc = sqlite3_step(stmt);
-	if (rc != SQLITE_ROW) {
+	int rc = db_step(stmt);
+	if (rc != SQLITE_ROW)
 		err("repository not found: %s", name);
-		return;
-	}
 
 	int64_t repository_id = sqlite3_column_int64(stmt, 0);
 	char *gitdir = xstrdup((const char *)sqlite3_column_text(stmt, 1));
 
-	if (repo_init(the_repository, gitdir, NULL) < 0) {
+	if (repo_init(the_repository, gitdir, NULL) < 0)
 		err("cannot initialize repository: %s", gitdir);
-		free(gitdir);
-		return;
-	}
 
 	// Do not cache the raw commit object buffers; we only need parsed
 	// metadata.
@@ -1266,11 +1235,9 @@ run_status(const char *name)
 	sqlite3_reset(stmt);
 	sqlite3_bind_text(stmt, 1, name, -1, SQLITE_STATIC);
 
-	int rc = sqlite3_step(stmt);
-	if (rc != SQLITE_ROW) {
+	int rc = db_step(stmt);
+	if (rc != SQLITE_ROW)
 		err("repository not found: %s", name);
-		return;
-	}
 
 	int64_t repository_id = sqlite3_column_int64(stmt, 0);
 	const char *path = (const char *)sqlite3_column_text(stmt, 1);
@@ -1283,19 +1250,19 @@ run_status(const char *name)
 	stmt = stmts[STMT_STATUS_COMMIT_COUNT];
 	sqlite3_reset(stmt);
 	sqlite3_bind_int64(stmt, 1, repository_id);
-	if (sqlite3_step(stmt) == SQLITE_ROW)
+	if (db_step(stmt) == SQLITE_ROW)
 		commits = sqlite3_column_int64(stmt, 0);
 
 	stmt = stmts[STMT_STATUS_FILE_COUNT];
 	sqlite3_reset(stmt);
 	sqlite3_bind_int64(stmt, 1, repository_id);
-	if (sqlite3_step(stmt) == SQLITE_ROW)
+	if (db_step(stmt) == SQLITE_ROW)
 		files = sqlite3_column_int64(stmt, 0);
 
 	stmt = stmts[STMT_STATUS_REF_COUNTS];
 	sqlite3_reset(stmt);
 	sqlite3_bind_int64(stmt, 1, repository_id);
-	while (sqlite3_step(stmt) == SQLITE_ROW) {
+	while (db_step(stmt) == SQLITE_ROW) {
 		int ref_type = sqlite3_column_int(stmt, 0);
 		int64_t count = sqlite3_column_int64(stmt, 1);
 		switch (ref_type) {
@@ -1361,7 +1328,6 @@ main(int argc, char *const argv[])
 			print_usage(stdout, argv[0]);
 			return 0;
 		default:
-			err("Unknown option: %c", i);
 			print_usage(stderr, argv[0]);
 			return 1;
 		}
@@ -1370,36 +1336,27 @@ main(int argc, char *const argv[])
 	if (database == NULL) {
 		database = getenv("BUSHI_DATABASE");
 	}
-	if (database == NULL) {
+	if (database == NULL)
 		err("database path not specified");
-		return 1;
-	}
 
 	if (mode == MODE_ADD) {
-		if (path == NULL) {
+		if (path == NULL)
 			err("-a requires PATH");
-			return 1;
-		}
-		if (argv[optind] != NULL) {
+		if (argv[optind] != NULL)
 			err("-a does not take NAME");
-			return 1;
-		}
 	} else if (mode == MODE_LIST) {
-		if (argv[optind] != NULL) {
+		if (argv[optind] != NULL)
 			err("-l does not take arguments");
-			return 1;
-		}
 	} else {
-		if (argv[optind] == NULL || argv[optind + 1] != NULL) {
+		if (argv[optind] == NULL || argv[optind + 1] != NULL)
 			err("exactly one NAME required");
-			return 1;
-		}
 		name = argv[optind];
 	}
 
+	if (mode == MODE_CHECK || mode == MODE_FIXUP || mode == MODE_REMOVE)
+		err("mode not implemented yet");
+
 	conn = db_open(database);
-	if (!conn)
-		return 1;
 
 	switch (mode) {
 	case MODE_LIST:
