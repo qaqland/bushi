@@ -4,6 +4,7 @@
 #include <inttypes.h>
 #include <sqlite3.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 
 #include "commit.h"
@@ -13,14 +14,17 @@
 #include "hex.h"
 #include "object.h"
 #include "path.h"
+#include "progress.h"
 #include "refs.h"
 #include "repository.h"
 #include "setup.h"
 #include "strbuf.h"
 #include "strmap.h"
+#include "trace.h"
 #include "version.h"
 
 static bool debug = false;
+static bool show_progress = false;
 
 #define dbg(FMT, ...)                                                          \
 	do {                                                                   \
@@ -36,6 +40,15 @@ static bool debug = false;
 			"error: " FMT "\n" __VA_OPT__(, ) __VA_ARGS__);        \
 		exit(EXIT_FAILURE);                                            \
 	} while (0)
+
+// avoid clashing with git's start_progress().
+static struct progress *
+progress_start(const char *msg, uint64_t total)
+{
+	return show_progress
+		   ? start_delayed_progress(the_repository, msg, total)
+		   : NULL;
+}
 
 char *
 gitdir_from_path(const char *path)
@@ -107,6 +120,7 @@ enum {
 	STMT_DELETE_DIRTY_REFS,
 
 	STMT_BACKFILL_LIST_PATHS,
+	STMT_BACKFILL_COUNT_PATHS,
 	STMT_BACKFILL_PATH_COMMITS,
 	STMT_BACKFILL_UPDATE_CHANGE,
 	STMT_BACKFILL_LOAD_COMMITS,
@@ -222,6 +236,14 @@ const char *texts[STMT_COUNT] = {
 	),
 	[STMT_BACKFILL_LIST_PATHS] = SQL(
 		SELECT DISTINCT cg.path_id
+		  FROM changes AS cg
+		  JOIN commits AS c
+		    ON c.commit_id = cg.commit_id
+		 WHERE c.repository_id = ?1
+		   AND cg.last_commit_id IS NULL;
+	),
+	[STMT_BACKFILL_COUNT_PATHS] = SQL(
+		SELECT COUNT(DISTINCT cg.path_id)
 		  FROM changes AS cg
 		  JOIN commits AS c
 		    ON c.commit_id = cg.commit_id
@@ -748,8 +770,16 @@ cleanup:
 	diff_flush(&opt);
 }
 
+struct sync_progress {
+	int64_t repository_id;
+	struct progress *display;
+	uint64_t commit_count;
+	uint64_t refs_scanned;
+};
+
 static void
-walk_commit_history(int64_t repository_id, struct commit *commit)
+walk_commit_history(int64_t repository_id, struct commit *commit,
+		    struct sync_progress *progress)
 {
 	struct commit_list *stack = NULL;
 	commit_list_insert(commit, &stack);
@@ -772,6 +802,7 @@ walk_commit_history(int64_t repository_id, struct commit *commit)
 
 		insert_commit(repository_id, hash, parent_hash);
 		insert_changes_for_commit(repository_id, c);
+		display_progress(progress->display, ++progress->commit_count);
 
 		// Walk up through *all* parents.
 		for (struct commit_list *p = c->parents; p; p = p->next)
@@ -783,7 +814,7 @@ walk_commit_history(int64_t repository_id, struct commit *commit)
 static int
 walk_ref_commits(const struct reference *ref, void *cb_data)
 {
-	int64_t repository_id = *(int64_t *)cb_data;
+	struct sync_progress *progress = cb_data;
 
 	// Resolve ref to a commit; skip anything that is not a commit.
 	struct commit *commit =
@@ -791,14 +822,17 @@ walk_ref_commits(const struct reference *ref, void *cb_data)
 	if (!commit)
 		return 0;
 
-	walk_commit_history(repository_id, commit);
+	walk_commit_history(progress->repository_id, commit, progress);
 	return 0;
 }
 
 static int
 insert_ref(const struct reference *ref, void *cb_data)
 {
-	int64_t repository_id = *(int64_t *)cb_data;
+	struct sync_progress *progress = cb_data;
+	int64_t repository_id = progress->repository_id;
+
+	display_progress(progress->display, ++progress->refs_scanned);
 
 	struct commit *commit =
 	    lookup_commit_reference_gently(the_repository, ref->oid, 1);
@@ -946,11 +980,13 @@ update_first_depth(int64_t commit_id, uint32_t depth)
 }
 
 static void
-backfill_first_depths(struct backfill_index *idx)
+backfill_first_depths(struct backfill_index *idx, struct progress *progress)
 {
 	struct local_index_stack trail = {0};
 
 	for (uint32_t i = 0; i < idx->num_commits; i++) {
+		display_progress(progress, i);
+
 		uint32_t curr = i;
 		uint32_t depth;
 
@@ -982,6 +1018,7 @@ backfill_first_depths(struct backfill_index *idx)
 	}
 
 	db_batch_flush();
+	display_progress(progress, idx->num_commits);
 	free(trail.items);
 }
 
@@ -1137,18 +1174,40 @@ backfill_one_path(int64_t path_id, int64_t repository_id,
 	}
 }
 
-static void
+static uint64_t
 backfill_repository(int64_t repository_id)
 {
 	dbg("backfilling repository %" PRId64, repository_id);
 
+	if (show_progress)
+		fprintf(stderr, "preparing backfill index...\n");
 	struct backfill_index *idx = build_backfill_index(repository_id);
 	if (!idx)
-		return;
+		return 0;
 
-	backfill_first_depths(idx);
+	struct progress *depths =
+	    progress_start("computing first-parent depths", idx->num_commits);
+
+	backfill_first_depths(idx, depths);
+	stop_progress_msg(&depths, "done");
 
 	// List paths with at least one unfilled change in this repository.
+	sqlite3_stmt *count_paths = stmts[STMT_BACKFILL_COUNT_PATHS];
+	sqlite3_reset(count_paths);
+	sqlite3_bind_int64(count_paths, 1, repository_id);
+	uint64_t path_total = 0;
+	if (db_step(count_paths) == SQLITE_ROW)
+		path_total = sqlite3_column_int64(count_paths, 0);
+	if (!path_total) {
+		backfill_index_free(idx);
+		return 0;
+	}
+
+	struct progress *paths =
+	    progress_start("backfilling paths", path_total);
+	display_progress(paths, 0);
+
+	uint64_t path_count = 0;
 	sqlite3_stmt *list_paths = stmts[STMT_BACKFILL_LIST_PATHS];
 	sqlite3_reset(list_paths);
 	sqlite3_bind_int64(list_paths, 1, repository_id);
@@ -1165,19 +1224,23 @@ backfill_repository(int64_t repository_id)
 	while (db_step(list_paths) == SQLITE_ROW) {
 		int64_t path_id = sqlite3_column_int64(list_paths, 0);
 		backfill_one_path(path_id, repository_id, idx, &buf);
+		display_progress(paths, ++path_count);
 	}
 	db_batch_flush();
+	stop_progress_msg(&paths, "done");
 
 	free(buf.pending);
 	free(buf.bitmap);
 	backfill_index_free(idx);
 
 	dbg("backfill done for repository %" PRId64, repository_id);
+	return path_count;
 }
 
 void
 run_sync(const char *name)
 {
+	uint64_t started_at = getnanotime();
 	sqlite3_stmt *stmt = stmts[STMT_GET_REPOSITORY_BY_NAME];
 	sqlite3_reset(stmt);
 	sqlite3_bind_text(stmt, 1, name, -1, SQLITE_STATIC);
@@ -1214,12 +1277,20 @@ run_sync(const char *name)
 		err("failed to mark refs dirty: %s", sqlite3_errmsg(conn));
 
 	// Walk each ref's history, inserting commits and changes as we go
+	struct sync_progress progress = {
+	    .repository_id = repository_id,
+	    .display = progress_start("indexing new commits", 0),
+	};
+	display_progress(progress.display, 0);
 	refs_for_each_ref(get_main_ref_store(the_repository), walk_ref_commits,
-			  &repository_id);
+			  &progress);
+	stop_progress_msg(&progress.display, "done");
 
 	// Upsert all current refs; this also clears is_dirty for each live ref
+	progress.display = progress_start("scanning references", 0);
+	display_progress(progress.display, 0);
 	refs_for_each_ref(get_main_ref_store(the_repository), insert_ref,
-			  &repository_id);
+			  &progress);
 
 	// Delete refs that are no longer present
 	stmt = stmts[STMT_DELETE_DIRTY_REFS];
@@ -1229,12 +1300,20 @@ run_sync(const char *name)
 	if (rc != SQLITE_DONE)
 		err("failed to delete dirty refs: %s", sqlite3_errmsg(conn));
 	db_batch_flush();
+	stop_progress_msg(&progress.display, "done");
 
 	strmap_clear(&path_map, 0);
 	free(gitdir);
 	repo_clear(the_repository);
 
-	backfill_repository(repository_id);
+	uint64_t paths_backfilled = backfill_repository(repository_id);
+
+	fprintf(stderr,
+		"%s: %" PRIu64 " new commits, %" PRIu64 " refs scanned, "
+		"%" PRIu64 " paths backfilled - %.2fs\n",
+		name, progress.commit_count, progress.refs_scanned,
+		paths_backfilled,
+		(double)(getnanotime() - started_at) / 1000000000.0);
 }
 
 void
@@ -1365,6 +1444,7 @@ main(int argc, char *const argv[])
 	if (mode == MODE_CHECK || mode == MODE_FIXUP || mode == MODE_REMOVE)
 		err("mode not implemented yet");
 
+	show_progress = isatty(STDERR_FILENO) && !debug;
 	conn = db_open(database);
 
 	switch (mode) {
