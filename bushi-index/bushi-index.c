@@ -246,6 +246,7 @@ const char *texts[STMT_COUNT] = {
 	[STMT_BACKFILL_LOAD_COMMITS] = SQL(
 		SELECT c.commit_id
 		     , p.commit_id AS parent_id
+		     , c.first_depth
 		  FROM commits AS c
 		  LEFT JOIN commits AS p
 		    ON c.repository_id = p.repository_id
@@ -998,6 +999,7 @@ build_backfill_index(int64_t repository_id)
 	int64_t *parent_ids = NULL;
 	size_t commit_ids_alloc = 0;
 	size_t parent_ids_alloc = 0;
+	size_t first_depth_alloc = 0;
 	uint32_t num = 0; // local index, starts at 0
 
 	while (db_step(stmt) == SQLITE_ROW) {
@@ -1009,6 +1011,13 @@ build_backfill_index(int64_t repository_id)
 			parent_ids[num] = 0;
 		else
 			parent_ids[num] = sqlite3_column_int64(stmt, 1);
+
+		ALLOC_GROW(idx->first_depth, num + 1, first_depth_alloc);
+		if (sqlite3_column_type(stmt, 2) == SQLITE_NULL)
+			idx->first_depth[num] = UINT32_MAX;
+		else
+			idx->first_depth[num] = sqlite3_column_int64(stmt, 2);
+
 		num++;
 
 		if (num == UINT32_MAX)
@@ -1016,6 +1025,8 @@ build_backfill_index(int64_t repository_id)
 	}
 
 	REALLOC_ARRAY(commit_ids, num);
+	REALLOC_ARRAY(idx->first_depth, num);
+
 	idx->commit_ids = commit_ids;
 	idx->num_commits = num;
 
@@ -1027,10 +1038,8 @@ build_backfill_index(int64_t repository_id)
 		idmap_put(&idx->idmap, idx->commit_ids[i], i);
 
 	CALLOC_ARRAY(idx->parent_local, num);
-	CALLOC_ARRAY(idx->first_depth, num);
 	for (uint32_t i = 0; i < num; i++) {
 		idx->parent_local[i] = UINT32_MAX;
-		idx->first_depth[i] = UINT32_MAX;
 		int64_t parent_id = parent_ids[i];
 		if (!parent_id)
 			continue;
