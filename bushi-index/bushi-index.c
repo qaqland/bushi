@@ -424,21 +424,24 @@ db_batch_flush(void)
 static void
 print_usage(FILE *stream, const char *prog)
 {
-	fprintf(stream,
-		"Usage: %s [-t DATABASE] [OPTIONS] NAME\n"
-		"\n"
-		"Index git repository metadata into an SQLite database.\n"
-		"\n"
-		"\t-a PATH       Add a repository from PATH\n"
-		"\t-t DATABASE   SQLite database path\n"
-		"\t-c            Check repository consistency\n"
-		"\t-f            Fix missing objects\n"
-		"\t-s            Show repository status\n"
-		"\t-r            Remove a repository from the index\n"
-		"\t-l            List indexed repositories\n"
-		"\t-d            Enable debug output\n"
-		"",
-		prog);
+	fprintf(
+	    stream,
+	    "Usage: %s [-t DATABASE] [OPTIONS] [NAME]\n"
+	    "\n"
+	    "Index git repository metadata into an SQLite database.\n"
+	    "\n"
+	    "\t-a PATH       Register a repository (no NAME; does not sync)\n"
+	    "\t-t DATABASE   SQLite database path (or BUSHI_DATABASE)\n"
+	    "\t-c            Check repository consistency (not implemented)\n"
+	    "\t-f            Fix missing objects (not implemented)\n"
+	    "\t-s            Show repository status\n"
+	    "\t-r            Remove a repository (not implemented)\n"
+	    "\t-l            List registered repositories (no NAME)\n"
+	    "\t-d            Enable debug output (disables live progress)\n"
+	    "\t-v            Show the linked Git version\n"
+	    "\n"
+	    "Without a mode option, sync the repository named NAME.\n",
+	    prog);
 }
 
 enum Mode {
